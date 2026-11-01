@@ -1053,6 +1053,7 @@ fun ApkDownloadTab(context: Context) {
         .trim('/')
 
     val hasRepo = cleanRepo.isNotBlank() && cleanRepo.contains("/")
+    val rawRepoApkUrl = if (hasRepo) "https://github.com/$cleanRepo/raw/main/ScreenCaptureOverlay.apk" else "https://github.com"
     val releasesUrl = if (hasRepo) "https://github.com/$cleanRepo/releases" else "https://github.com"
     val directApkUrl = if (hasRepo) "https://github.com/$cleanRepo/releases/latest/download/ScreenCaptureOverlay-release.apk" else "https://github.com"
     val actionsUrl = if (hasRepo) "https://github.com/$cleanRepo/actions" else "https://github.com"
@@ -1121,6 +1122,24 @@ fun ApkDownloadTab(context: Context) {
 
                     Spacer(modifier = Modifier.height(16.dp))
 
+                    // 0. Prebuilt Raw APK from Repo (Immediate)
+                    Button(
+                        onClick = {
+                            if (hasRepo) {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(rawRepoApkUrl))
+                                context.startActivity(intent)
+                            } else {
+                                Toast.makeText(context, "Lütfen önce yukarıya GitHub deponuzu girin.", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = GeminiGreen),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("⚡ Hazır APK'yı İndir (Doğrudan Repodan)", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     // 1. Direct Release Link
                     Button(
                         onClick = {
@@ -1134,7 +1153,7 @@ fun ApkDownloadTab(context: Context) {
                         colors = ButtonDefaults.buttonColors(containerColor = GeminiCyan),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text("🚀 En Son APK'yı İndir (Releases Sayfası)", color = Color.Black, fontWeight = FontWeight.Bold)
+                        Text("🚀 Releases Sayfasına Git", color = Color.Black, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))

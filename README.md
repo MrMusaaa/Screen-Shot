@@ -9,17 +9,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/musabuzman13/screen-capture-overlay/releases/latest/download/ScreenCaptureOverlay-debug.apk">
+  <a href="../../releases/latest/download/ScreenCaptureOverlay-debug.apk">
     <img src="https://img.shields.io/badge/📥_DOĞRUDAN_APK_İNDİR-ScreenCaptureOverlay--debug.apk-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="Download APK"/>
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/musabuzman13/screen-capture-overlay/releases">
+  <a href="../../releases">
     <img src="https://img.shields.io/badge/GitHub_Releases-En_Son_Sürüm-blue?style=flat-square&logo=github" alt="Releases"/>
   </a>
-  <a href="https://github.com/musabuzman13/screen-capture-overlay/actions/workflows/build-apk.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/musabuzman13/screen-capture-overlay/build-apk.yml?branch=main&label=CI%2FCD%20Build%20APK&style=flat-square" alt="Build Status"/>
+  <a href="../../actions">
+    <img src="https://img.shields.io/badge/CI%2FCD-GitHub_Actions-purple?style=flat-square&logo=githubactions" alt="Actions"/>
   </a>
   <img src="https://img.shields.io/badge/Platform-Android%207.0%2B-green?style=flat-square&logo=android" alt="Android 7.0+"/>
   <img src="https://img.shields.io/badge/Language-Kotlin%20%2F%20Compose-purple?style=flat-square&logo=kotlin" alt="Kotlin"/>
@@ -33,9 +33,9 @@ Telefona doğrudan yüklemek için aşağıdaki bağlantıları kullanabilirsini
 
 | Buton | Açıklama | Bağlantı |
 | :--- | :--- | :--- |
-| 🚀 **Tek Tıkla APK İndir** | En son derlenen `.apk` dosyasını doğrudan cihazınıza indirir | [**ScreenCaptureOverlay-debug.apk İndir**](https://github.com/musabuzman13/screen-capture-overlay/releases/latest/download/ScreenCaptureOverlay-debug.apk) |
-| 📦 **Tüm Sürümler (Releases)** | Geçmiş sürümleri ve changelog notlarını görüntüler | [**Releases Sayfasına Git**](https://github.com/musabuzman13/screen-capture-overlay/releases) |
-| ⚙️ **Canlı CI/CD Derleme** | GitHub Actions üzerinde çalışan APK derleme adımlarını izler | [**GitHub Actions İş Akışı**](https://github.com/musabuzman13/screen-capture-overlay/actions/workflows/build-apk.yml) |
+| 🚀 **Tek Tıkla APK İndir** | En son derlenen `.apk` dosyasını doğrudan cihazınıza indirir | [**ScreenCaptureOverlay-debug.apk İndir**](../../releases/latest/download/ScreenCaptureOverlay-debug.apk) |
+| 📦 **Tüm Sürümler (Releases)** | Geçmiş sürümleri ve changelog notlarını görüntüler | [**Releases Sayfasına Git**](../../releases) |
+| ⚙️ **Canlı CI/CD Derleme** | GitHub Actions üzerinde çalışan APK derleme adımlarını izler | [**GitHub Actions İş Akışı**](../../actions) |
 
 ---
 
@@ -51,8 +51,8 @@ Telefona doğrudan yüklemek için aşağıdaki bağlantıları kullanabilirsini
 
 ## 🚀 Kurulum ve İlk Kullanım Adımları
 
-1. **APK'yı İndirin:** Yukarıdaki **[Doğrudan APK İndir]** bağlantısına tıklayın.
-2. **Yükleyin:** İndirilen `ScreenCaptureOverlay-debug.apk` dosyasına tıklayın (Gerekirse *"Bilinmeyen kaynaklardan uygulama yüklemeye izin ver"* seçeneğini onaylayın).
+1. **APK'yı İndirin:** Yukarıdaki **[Doğrudan APK İndir]** butonuna veya Releases sekmesine tıklayın.
+2. **Yükleyin:** İndirilen `ScreenCaptureOverlay-debug.apk` dosyasını açın (Gerekirse *"Bilinmeyen kaynaklardan uygulama yüklemeye izin ver"* seçeneğini onaylayın).
 3. **İzinleri Verin:**
    - **Yüzen Simge İzni (`SYSTEM_ALERT_WINDOW`):** Diğer uygulamaların üzerinde görüntülenebilmesi için.
    - **Ekran Yakalama İzni (`MediaProjection`):** Sanal ekran oluşturabilmesi için sistem ekran paylaşım onayını verin.

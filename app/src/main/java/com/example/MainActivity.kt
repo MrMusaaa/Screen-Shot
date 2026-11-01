@@ -1042,13 +1042,20 @@ private fun shareMediaUri(context: Context, uri: Uri, isVideo: Boolean) {
 
 @Composable
 fun ApkDownloadTab(context: Context) {
-    var githubRepo by remember { mutableStateOf("musabuzman13/screen-capture-overlay") }
+    val prefs = remember { context.getSharedPreferences("app_settings", Context.MODE_PRIVATE) }
+    var githubRepo by remember { mutableStateOf(prefs.getString("github_repo", "") ?: "") }
     val clipboardManager = remember { context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager }
 
-    val cleanRepo = githubRepo.trim().removePrefix("https://github.com/").removeSuffix(".git")
-    val releasesUrl = "https://github.com/$cleanRepo/releases"
-    val directApkUrl = "https://github.com/$cleanRepo/releases/latest/download/ScreenCaptureOverlay-debug.apk"
-    val actionsUrl = "https://github.com/$cleanRepo/actions"
+    val cleanRepo = githubRepo.trim()
+        .removePrefix("https://github.com/")
+        .removePrefix("http://github.com/")
+        .removeSuffix(".git")
+        .trim('/')
+
+    val hasRepo = cleanRepo.isNotBlank() && cleanRepo.contains("/")
+    val releasesUrl = if (hasRepo) "https://github.com/$cleanRepo/releases" else "https://github.com"
+    val directApkUrl = if (hasRepo) "https://github.com/$cleanRepo/releases/latest/download/ScreenCaptureOverlay-debug.apk" else "https://github.com"
+    val actionsUrl = if (hasRepo) "https://github.com/$cleanRepo/actions" else "https://github.com"
 
     LazyColumn(
         modifier = Modifier
@@ -1088,9 +1095,12 @@ fun ApkDownloadTab(context: Context) {
 
                     OutlinedTextField(
                         value = githubRepo,
-                        onValueChange = { githubRepo = it },
+                        onValueChange = {
+                            githubRepo = it
+                            prefs.edit().putString("github_repo", it).apply()
+                        },
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("ornek: musabuzman13/screen-capture-overlay", color = TextSecondary) },
+                        placeholder = { Text("ornek: kullanici-adiniz/depo-adiniz", color = TextSecondary) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = GeminiCyan,
                             unfocusedBorderColor = DarkBorder,
@@ -1100,13 +1110,26 @@ fun ApkDownloadTab(context: Context) {
                         singleLine = true
                     )
 
+                    if (!hasRepo && githubRepo.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Lütfen 'kullanici/depo-adi' formatında giriniz.",
+                            color = GeminiRed,
+                            fontSize = 11.sp
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // 1. Direct Release Link
                     Button(
                         onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(releasesUrl))
-                            context.startActivity(intent)
+                            if (hasRepo) {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(releasesUrl))
+                                context.startActivity(intent)
+                            } else {
+                                Toast.makeText(context, "Lütfen önce yukarıya GitHub deponuzu girin.", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = GeminiCyan),
                         modifier = Modifier.fillMaxWidth()
@@ -1119,8 +1142,12 @@ fun ApkDownloadTab(context: Context) {
                     // 2. Direct APK Download link
                     OutlinedButton(
                         onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(directApkUrl))
-                            context.startActivity(intent)
+                            if (hasRepo) {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(directApkUrl))
+                                context.startActivity(intent)
+                            } else {
+                                Toast.makeText(context, "Lütfen önce yukarıya GitHub deponuzu girin.", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = GeminiCyan),
                         border = androidx.compose.foundation.BorderStroke(1.dp, GeminiCyan),
@@ -1134,8 +1161,12 @@ fun ApkDownloadTab(context: Context) {
                     // 3. Actions Live Workflow Link
                     Button(
                         onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(actionsUrl))
-                            context.startActivity(intent)
+                            if (hasRepo) {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(actionsUrl))
+                                context.startActivity(intent)
+                            } else {
+                                Toast.makeText(context, "Lütfen önce yukarıya GitHub deponuzu girin.", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = GeminiPurple),
                         modifier = Modifier.fillMaxWidth()

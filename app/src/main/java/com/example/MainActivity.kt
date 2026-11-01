@@ -1054,7 +1054,7 @@ fun ApkDownloadTab(context: Context) {
 
     val hasRepo = cleanRepo.isNotBlank() && cleanRepo.contains("/")
     val releasesUrl = if (hasRepo) "https://github.com/$cleanRepo/releases" else "https://github.com"
-    val directApkUrl = if (hasRepo) "https://github.com/$cleanRepo/releases/latest/download/ScreenCaptureOverlay-debug.apk" else "https://github.com"
+    val directApkUrl = if (hasRepo) "https://github.com/$cleanRepo/releases/latest/download/ScreenCaptureOverlay-release.apk" else "https://github.com"
     val actionsUrl = if (hasRepo) "https://github.com/$cleanRepo/actions" else "https://github.com"
 
     LazyColumn(
@@ -1229,6 +1229,39 @@ fun ApkDownloadTab(context: Context) {
                     ) {
                         Text("📋 Git Komutlarını Panoya Kopyala")
                     }
+                }
+            }
+        }
+
+        // 3. 404 Çözüm Kartı
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, GeminiRed.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "🚨 404 Hatası veya Workflow Çalışmıyorsa Çözümü:",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = GeminiRed
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "GitHub Releases sayfası henüz en az 1 kez APK derlenip yayımlanmadığında '404 Not Found' verir. Çözmek için:",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(
+                        text = "1. GitHub'da deponuzun 'Actions' sekmesine gidin. Eğer yeşil bir buton ('I understand my workflows...') çıkarsa tıklayıp onaylayın.\n\n" +
+                               "2. Depo Ayarlarından: Settings > Actions > General > Workflow permissions bölümüne gidin ve 'Read and write permissions' seçip Save yapın.\n\n" +
+                               "3. Actions sekmesinden sol menüdeki 'Build & Release Android APK' iş akışını seçip sağdaki 'Run workflow' butonuna basarak derlemeyi hemen başlatın!",
+                        fontSize = 12.sp,
+                        color = TextPrimary
+                    )
                 }
             }
         }

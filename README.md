@@ -9,8 +9,8 @@
 </p>
 
 <p align="center">
-  <a href="../../releases/latest/download/ScreenCaptureOverlay-debug.apk">
-    <img src="https://img.shields.io/badge/📥_DOĞRUDAN_APK_İNDİR-ScreenCaptureOverlay--debug.apk-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="Download APK"/>
+  <a href="../../releases/latest/download/ScreenCaptureOverlay-release.apk">
+    <img src="https://img.shields.io/badge/📥_DOĞRUDAN_APK_İNDİR-ScreenCaptureOverlay--release.apk-00E5FF?style=for-the-badge&logo=android&logoColor=black" alt="Download APK"/>
   </a>
 </p>
 
@@ -33,7 +33,7 @@ Telefona doğrudan yüklemek için aşağıdaki bağlantıları kullanabilirsini
 
 | Buton | Açıklama | Bağlantı |
 | :--- | :--- | :--- |
-| 🚀 **Tek Tıkla APK İndir** | En son derlenen `.apk` dosyasını doğrudan cihazınıza indirir | [**ScreenCaptureOverlay-debug.apk İndir**](../../releases/latest/download/ScreenCaptureOverlay-debug.apk) |
+| 🚀 **Tek Tıkla APK İndir** | En son derlenen Release `.apk` dosyasını doğrudan cihazınıza indirir | [**ScreenCaptureOverlay-release.apk İndir**](../../releases/latest/download/ScreenCaptureOverlay-release.apk) |
 | 📦 **Tüm Sürümler (Releases)** | Geçmiş sürümleri ve changelog notlarını görüntüler | [**Releases Sayfasına Git**](../../releases) |
 | ⚙️ **Canlı CI/CD Derleme** | GitHub Actions üzerinde çalışan APK derleme adımlarını izler | [**GitHub Actions İş Akışı**](../../actions) |
 

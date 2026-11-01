@@ -1,0 +1,83 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'GitHub Release olarak yayınlansın mı?'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x gradlew
+
+      - name: Build APK with Gradle
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Rename APK for Easy Identification
+        run: |
+          mkdir -p output_apk
+          cp app/build/outputs/apk/debug/*.apk output_apk/ScreenCaptureOverlay-debug.apk
+          echo "APK generated successfully:"
+          ls -la output_apk/
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenCaptureOverlay-APK
+          path: output_apk/ScreenCaptureOverlay-debug.apk
+          retention-days: 30
+
+      - name: Create GitHub Release and Attach APK
+        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Screen Capture Overlay v1.0.${{ github.run_number }}"
+          body: |
+            ### 🚀 Screen Capture Overlay (Gemini Live Floating Widget)
+            
+            Otomatik olarak derlenmiş hazır Android APK paketi.
+            
+            #### 📦 Kurulum:
+            1. Aşağıdaki **`ScreenCaptureOverlay-debug.apk`** dosyasını Android cihazınıza indirin.
+            2. Bilinmeyen kaynaklara izin vererek APK'yı kurun.
+            3. Uygulamayı açıp **SYSTEM_ALERT_WINDOW (Overlay)** ve **MediaProjection (Ekran Yakalama)** izinlerini verin.
+            4. Yüzen simgeyi aktif ederek ekran görüntüsü veya video kaydı almaya başlayın!
+            
+            *Derleme Zamanı: ${{ github.event.head_commit.timestamp || github.sha }}*
+          draft: false
+          prerelease: false
+          files: output_apk/ScreenCaptureOverlay-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

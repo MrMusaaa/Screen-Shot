@@ -1,0 +1,6 @@
+{
+  "name": "Screen Capture Overlay",
+  "description": "Floating overlay widget for seamless screen capture and recording via MediaProjection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

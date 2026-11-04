@@ -16,30 +16,26 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.provider.MediaStore
 import android.util.Log
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.io.OutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * FrameCaptureHelper
  * 
- * Doğrudan Android Grafik Katmanı (SurfaceFlinger) tamponundan VirtualDisplay ve ImageReader
- * aracılığıyla İSTEK ÜZERİNE (On-Demand) en son ekran karesini yakalar.
- *
- * Gemini Asistan mimarisi:
- * Arka planda sürekli bir VirtualDisplay açık tutulmaz; sadece kullanıcı 'Ekranı Çek' dediğinde
- * ~50ms süreyle VirtualDisplay oluşturulur, taze kare yakalanır ve derhal serbest bırakılır.
- * Bu sayede:
- * 1. WhatsApp, Snapchat, Instagram gibi sohbet uygulamalarında 'Ekran görüntüsü alındı' veya
- *    ekran kaydı uyarıları asla sebepsiz yere tetiklenmez.
- * 2. Bellek tamponu (ImageReader) asla tıkanmaz veya eski karelerde donup kalmaz.
+ * Gemini Asistan Mimarisi:
+ * 1. Asla kamuya açık MediaStore (Pictures/Screenshots) veritabanına doğrudan kayıt YAPMAZ.
+ *    Instagram, Snapchat, WhatsApp vb. uygulamalar MediaStore'u ContentObserver ile dinleyerek
+ *    "ekran görüntüsü alındı" uyarısı verir. Özel uygulama dizini (sandbox) kullanıldığında
+ *    hiçbir dış uygulama bu kaydı göremez veya algılayamaz.
+ * 2. Arka planda sürekli VirtualDisplay çalıştırmaz. Sadece 'Ekranı Çek' denildiğinde ~30ms
+ *    için oluşturup derhal kapatır.
  */
 object FrameCaptureHelper {
 
@@ -47,7 +43,8 @@ object FrameCaptureHelper {
 
     /**
      * İsteğe bağlı olarak VirtualDisplay ve ImageReader oluşturur, ilk taze kareyi bekler,
-     * Bitmap'e dönüştürür, MediaStore'a kaydeder ve kaynakları derhal serbest bırakır.
+     * temiz Bitmap'e dönüştürür ve UYGULAMANIN ÖZEL ALANINA (Sandbox) kaydeder.
+     * Karşı tarafa veya harici uygulamalara kesinlikle bildirim gitmez.
      */
     suspend fun captureFrameOnDemand(
         mediaProjection: MediaProjection,
@@ -133,7 +130,8 @@ object FrameCaptureHelper {
                 rawBitmap
             }
 
-            val uri = saveBitmapToGallery(context, cleanBitmap)
+            // MediaStore'a değil, uygulamanın kendi gizli kum havuzuna (sandbox) kaydet!
+            val uri = saveBitmapToPrivateStorage(context, cleanBitmap)
             cleanBitmap.recycle()
             return@withContext uri
 
@@ -150,60 +148,65 @@ object FrameCaptureHelper {
     }
 
     /**
-     * Yakalanan Bitmap nesnesini cihazın Pictures/ScreenCaptures galerisine kaydeder.
+     * Bitmap nesnesini uygulamanın özel sandbox alanına kaydeder.
+     * Bu alan işletim sisteminin MediaStore dizinlerinden tamamen izoledir.
+     * Bu sayede Snapchat / Instagram / WhatsApp / Bankacılık uygulamaları
+     * ContentObserver ile ekran görüntüsünü ASLA tespit edemez.
      */
-    fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? {
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val fileName = "ScreenOverlay_$timeStamp.jpg"
-        val resolver = context.contentResolver
-
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ScreenCaptures")
-                put(MediaStore.Images.Media.IS_PENDING, 1)
+    fun saveBitmapToPrivateStorage(context: Context, bitmap: Bitmap): Uri? {
+        try {
+            val capturesDir = File(context.filesDir, "captures").apply {
+                if (!exists()) mkdirs()
             }
+            val fileName = "cap_${System.currentTimeMillis()}.jpg"
+            val targetFile = File(capturesDir, fileName)
+
+            FileOutputStream(targetFile).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 96, out)
+                out.flush()
+            }
+
+            val authority = "${context.packageName}.fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, targetFile)
+            Log.d(TAG, "Özel alana gizlice kaydedildi (Sıfır bildirim): $uri")
+            return uri
+        } catch (e: Exception) {
+            Log.e(TAG, "Gizli kayıt hatası: ${e.message}", e)
+            return null
         }
+    }
 
-        val imageUri: Uri? = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-
-        if (imageUri != null) {
-            try {
-                resolver.openOutputStream(imageUri)?.use { outputStream: OutputStream ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
-                    outputStream.flush()
+    /**
+     * Kullanıcı isteğe bağlı olarak görseli cihazın ana genel galerisine aktarmak isterse kullanılır.
+     */
+    fun exportToPublicGallery(context: Context, sourceFile: File): Uri? {
+        try {
+            val resolver = context.contentResolver
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, sourceFile.name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ScreenCaptures")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
+            }
 
+            val imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            if (imageUri != null) {
+                resolver.openOutputStream(imageUri)?.use { out ->
+                    sourceFile.inputStream().use { input ->
+                        input.copyTo(out)
+                    }
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     contentValues.clear()
                     contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
                     resolver.update(imageUri, contentValues, null, null)
                 }
-
-                Log.d(TAG, "Ekran görüntüsü başarıyla kaydedildi: $imageUri")
                 return imageUri
-            } catch (e: Exception) {
-                Log.e(TAG, "Bitmap kaydedilirken yazma hatası: ${e.message}", e)
-                try {
-                    resolver.delete(imageUri, null, null)
-                } catch (ignored: Exception) {}
             }
-        } else {
-            // Legacy dosya kaydı fallback (API < 29)
-            try {
-                val picturesDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
-                val targetDir = File(picturesDir, "ScreenCaptures")
-                if (!targetDir.exists()) targetDir.mkdirs()
-                val file = File(targetDir, fileName)
-                FileOutputStream(file).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                    out.flush()
-                }
-                return Uri.fromFile(file)
-            } catch (e: Exception) {
-                Log.e(TAG, "Legacy kayıt hatası: ${e.message}", e)
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Kamu galerisine aktarma hatası: ${e.message}", e)
         }
         return null
     }

@@ -508,6 +508,76 @@ fun ControlPanelTab(
             }
         }
 
+        // 2.5 Gemini Cihaz Asistanı (Güç Tuşu Entegrasyonu)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, GeminiPurple.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = null,
+                            tint = GeminiCyan,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Güç Tuşu ile Asistan Yakalama",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Tıpkı orijinal Gemini gibi; Güç tuşuna basılı tutarak doğrudan Android OS seviyesinde ekran görüntüsü alın. Özel uygulama alanında saklandığı için karşı tarafa (Instagram/Snapchat/WhatsApp) SIFIR BİLDİRİM gider.",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Button(
+                        onClick = {
+                            try {
+                                val intent = Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS).apply {
+                                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                try {
+                                    context.startActivity(Intent("android.settings.MANAGE_DEFAULT_APPS_SETTINGS").apply {
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                                    })
+                                } catch (ignored: Exception) {
+                                    Toast.makeText(context, "Lütfen Ayarlar > Uygulamalar > Varsayılan Asistan menüsünden seçin.", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = GeminiPurple,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("set_default_assistant_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Varsayılan Asistan Olarak Ayarla (Güç Tuşu)",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
         // 3. Hızlı Eylemler (Uygulama İçi Test)
         item {
             Card(

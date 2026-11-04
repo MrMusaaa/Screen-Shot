@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileInputStream
 import java.io.OutputStream
@@ -59,10 +60,11 @@ class MediaRecorderManager(private val context: Context) {
         val validWidth = if (width % 2 == 0) width else width - 1
         val validHeight = if (height % 2 == 0) height else height - 1
 
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val fileName = "ScreenRecord_$timeStamp.mp4"
-        val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.cacheDir
-        tempVideoFile = File(storageDir, fileName)
+        val capturesDir = File(context.filesDir, "captures").apply {
+            if (!exists()) mkdirs()
+        }
+        val fileName = "vid_${System.currentTimeMillis()}.mp4"
+        tempVideoFile = File(capturesDir, fileName)
 
         val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MediaRecorder(context)
@@ -145,47 +147,10 @@ class MediaRecorderManager(private val context: Context) {
             return null
         }
 
-        // Dosyayı MediaStore Movies klasörüne taşı/kopyala
-        val finalUri = exportVideoToGallery(file)
-        Log.d(TAG, "Video kaydı tamamlandı ve kaydedildi: $finalUri")
+        val authority = "${context.packageName}.fileprovider"
+        val finalUri = FileProvider.getUriForFile(context, authority, file)
+        Log.d(TAG, "Video kaydı özel alana kaydedildi (Sıfır bildirim): $finalUri")
         return finalUri
-    }
-
-    private fun exportVideoToGallery(file: File): Uri? {
-        val resolver = context.contentResolver
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, file.name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ScreenRecordings")
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-        }
-
-        val videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
-        if (videoUri != null) {
-            try {
-                resolver.openOutputStream(videoUri)?.use { outputStream: OutputStream ->
-                    FileInputStream(file).use { inputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                    outputStream.flush()
-                }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    contentValues.clear()
-                    contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
-                    resolver.update(videoUri, contentValues, null, null)
-                }
-
-                // Temp dosyayı temizle
-                file.delete()
-                return videoUri
-            } catch (e: Exception) {
-                Log.e(TAG, "Video galeriye aktarılırken hata: ${e.message}", e)
-            }
-        }
-        return Uri.fromFile(file)
     }
 
     fun release() {

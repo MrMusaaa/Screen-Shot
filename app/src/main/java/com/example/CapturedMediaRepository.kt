@@ -1,13 +1,12 @@
 package com.example
 
-import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
-import android.os.Build
-import android.provider.MediaStore
 import android.util.Log
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 
 data class CapturedMediaItem(
     val id: Long,
@@ -15,7 +14,8 @@ data class CapturedMediaItem(
     val name: String,
     val isVideo: Boolean,
     val dateAdded: Long,
-    val sizeBytes: Long
+    val sizeBytes: Long,
+    val file: File? = null
 )
 
 object CapturedMediaRepository {
@@ -25,70 +25,33 @@ object CapturedMediaRepository {
         val items = mutableListOf<CapturedMediaItem>()
 
         try {
-            // 1. Ekran Görüntülerini Sorgula
-            val imageProjection = arrayOf(
-                MediaStore.Images.Media._ID,
-                MediaStore.Images.Media.DISPLAY_NAME,
-                MediaStore.Images.Media.DATE_ADDED,
-                MediaStore.Images.Media.SIZE
-            )
-            val imageSelection = "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?"
-            val imageArgs = arrayOf("ScreenOverlay_%")
+            val capturesDir = File(context.filesDir, "captures")
+            if (capturesDir.exists()) {
+                val files = capturesDir.listFiles() ?: emptyArray()
+                val authority = "${context.packageName}.fileprovider"
 
-            context.contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                imageProjection,
-                imageSelection,
-                imageArgs,
-                "${MediaStore.Images.Media.DATE_ADDED} DESC"
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-                val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
-                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    val name = cursor.getString(nameCol)
-                    val date = cursor.getLong(dateCol)
-                    val size = cursor.getLong(sizeCol)
-                    val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                    items.add(CapturedMediaItem(id, uri, name, false, date, size))
+                for (file in files) {
+                    if (file.isFile && (file.name.endsWith(".jpg") || file.name.endsWith(".mp4"))) {
+                        val isVideo = file.name.endsWith(".mp4")
+                        val uri = try {
+                            FileProvider.getUriForFile(context, authority, file)
+                        } catch (e: Exception) {
+                            Uri.fromFile(file)
+                        }
+                        items.add(
+                            CapturedMediaItem(
+                                id = file.lastModified(),
+                                uri = uri,
+                                name = file.name,
+                                isVideo = isVideo,
+                                dateAdded = file.lastModified() / 1000,
+                                sizeBytes = file.length(),
+                                file = file
+                            )
+                        )
+                    }
                 }
             }
-
-            // 2. Video Kayıtlarını Sorgula
-            val videoProjection = arrayOf(
-                MediaStore.Video.Media._ID,
-                MediaStore.Video.Media.DISPLAY_NAME,
-                MediaStore.Video.Media.DATE_ADDED,
-                MediaStore.Video.Media.SIZE
-            )
-            val videoSelection = "${MediaStore.Video.Media.DISPLAY_NAME} LIKE ?"
-            val videoArgs = arrayOf("ScreenRecord_%")
-
-            context.contentResolver.query(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                videoProjection,
-                videoSelection,
-                videoArgs,
-                "${MediaStore.Video.Media.DATE_ADDED} DESC"
-            )?.use { cursor ->
-                val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
-                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
-                val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_ADDED)
-                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
-
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idCol)
-                    val name = cursor.getString(nameCol)
-                    val date = cursor.getLong(dateCol)
-                    val size = cursor.getLong(sizeCol)
-                    val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
-                    items.add(CapturedMediaItem(id, uri, name, true, date, size))
-                }
-            }
-
         } catch (e: Exception) {
             Log.e(TAG, "Medyalar yüklenirken hata: ${e.message}", e)
         }
@@ -98,8 +61,11 @@ object CapturedMediaRepository {
 
     suspend fun deleteItem(context: Context, item: CapturedMediaItem): Boolean = withContext(Dispatchers.IO) {
         try {
-            val rows = context.contentResolver.delete(item.uri, null, null)
-            rows > 0
+            if (item.file != null && item.file.exists()) {
+                item.file.delete()
+            } else {
+                context.contentResolver.delete(item.uri, null, null) > 0
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Medya silinemedi: ${e.message}", e)
             false

@@ -3,15 +3,23 @@ package com.example
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
 import android.media.Image
 import android.media.ImageReader
+import android.media.projection.MediaProjection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.HandlerThread
 import android.provider.MediaStore
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStream
@@ -23,51 +31,82 @@ import java.util.Locale
  * FrameCaptureHelper
  * 
  * Doğrudan Android Grafik Katmanı (SurfaceFlinger) tamponundan VirtualDisplay ve ImageReader
- * aracılığıyla en son ekran karesini yakalar.
- * Sistem bazlı ekran görüntüsü tetikleyicilerini (Activity.ScreenCaptureCallback vb.) çalıştırmaz,
- * doğrudan bellek tamponundan (ImageReader) Bitmap oluşturur ve MediaStore'a kaydeder.
+ * aracılığıyla İSTEK ÜZERİNE (On-Demand) en son ekran karesini yakalar.
+ *
+ * Gemini Asistan mimarisi:
+ * Arka planda sürekli bir VirtualDisplay açık tutulmaz; sadece kullanıcı 'Ekranı Çek' dediğinde
+ * ~50ms süreyle VirtualDisplay oluşturulur, taze kare yakalanır ve derhal serbest bırakılır.
+ * Bu sayede:
+ * 1. WhatsApp, Snapchat, Instagram gibi sohbet uygulamalarında 'Ekran görüntüsü alındı' veya
+ *    ekran kaydı uyarıları asla sebepsiz yere tetiklenmez.
+ * 2. Bellek tamponu (ImageReader) asla tıkanmaz veya eski karelerde donup kalmaz.
  */
 object FrameCaptureHelper {
 
     private const val TAG = "FrameCaptureHelper"
 
     /**
-     * ImageReader'dan en son kareyi alır, RowStride/PixelStride hesaplamasını yapar,
-     * temiz bir Bitmap'e dönüştürür ve MediaStore'a JPEG olarak kaydeder.
+     * İsteğe bağlı olarak VirtualDisplay ve ImageReader oluşturur, ilk taze kareyi bekler,
+     * Bitmap'e dönüştürür, MediaStore'a kaydeder ve kaynakları derhal serbest bırakır.
      */
-    suspend fun captureAndSaveFrame(
-        imageReader: ImageReader,
+    suspend fun captureFrameOnDemand(
+        mediaProjection: MediaProjection,
         context: Context,
         screenWidth: Int,
-        screenHeight: Int
+        screenHeight: Int,
+        screenDensity: Int
     ): Uri? = withContext(Dispatchers.IO) {
-        var image: Image? = null
-        var bitmap: Bitmap? = null
-        var cleanBitmap: Bitmap? = null
+        val handlerThread = HandlerThread("FrameCaptureThread").apply { start() }
+        val backgroundHandler = Handler(handlerThread.looper)
+
+        val imageReader = ImageReader.newInstance(
+            screenWidth,
+            screenHeight,
+            PixelFormat.RGBA_8888,
+            2
+        )
+
+        val deferredImage = CompletableDeferred<Image?>()
+        var virtualDisplay: VirtualDisplay? = null
 
         try {
-            // Tampondaki en güncel ekran karesini al (kare gelene kadar kısa aralıklarla bekle)
-            var attempts = 0
-            while (image == null && attempts < 15) {
-                image = try {
-                    imageReader.acquireLatestImage() ?: imageReader.acquireNextImage()
+            imageReader.setOnImageAvailableListener({ reader ->
+                try {
+                    val img = reader.acquireLatestImage()
+                    if (img != null && !deferredImage.isCompleted) {
+                        deferredImage.complete(img)
+                    }
                 } catch (e: Exception) {
-                    null
+                    Log.e(TAG, "Image edinilirken hata: ${e.message}", e)
+                    if (!deferredImage.isCompleted) deferredImage.complete(null)
                 }
-                if (image == null) {
-                    kotlinx.coroutines.delay(30)
-                    attempts++
-                }
+            }, backgroundHandler)
+
+            virtualDisplay = mediaProjection.createVirtualDisplay(
+                "ScreenCapture_OnDemand",
+                screenWidth,
+                screenHeight,
+                screenDensity,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                imageReader.surface,
+                null,
+                backgroundHandler
+            )
+
+            // Ekran kartından taze kare gelmesi için azami 1500ms bekle (genelde 16-33ms içinde gelir)
+            val image = withTimeoutOrNull(1500) {
+                deferredImage.await()
             }
 
             if (image == null) {
-                Log.w(TAG, "ImageReader tamponunda okunabilir kare bulunamadı ($attempts deneme sonrası).")
+                Log.w(TAG, "ImageReader tamponundan kare zaman aşımına uğradı.")
                 return@withContext null
             }
 
             val planes = image.planes
             if (planes.isEmpty()) {
                 Log.e(TAG, "Image planes boş.")
+                image.close()
                 return@withContext null
             }
 
@@ -76,44 +115,44 @@ object FrameCaptureHelper {
             val rowStride = planes[0].rowStride
             val rowPadding = rowStride - pixelStride * screenWidth
 
-            // Bellek tamponu genişliğinde geçici Bitmap oluştur
             val bufferWidth = screenWidth + (if (pixelStride > 0) rowPadding / pixelStride else 0)
-            bitmap = Bitmap.createBitmap(
+            val rawBitmap = Bitmap.createBitmap(
                 bufferWidth,
                 screenHeight,
                 Bitmap.Config.ARGB_8888
             )
 
-            // Piksel verilerini bellek tamponundan kopyala
-            bitmap.copyPixelsFromBuffer(buffer)
+            rawBitmap.copyPixelsFromBuffer(buffer)
+            image.close()
 
-            // Eğer rowPadding varsa gerçek ekran çözünürlüğüne kırp
-            cleanBitmap = if (rowPadding > 0 || bufferWidth != screenWidth) {
-                Bitmap.createBitmap(bitmap, 0, 0, screenWidth, screenHeight)
+            val cleanBitmap = if (rowPadding > 0 || bufferWidth != screenWidth) {
+                val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, screenWidth, screenHeight)
+                rawBitmap.recycle()
+                cropped
             } else {
-                bitmap
+                rawBitmap
             }
 
-            // MediaStore'a kaydet
-            return@withContext saveBitmapToGallery(context, cleanBitmap)
+            val uri = saveBitmapToGallery(context, cleanBitmap)
+            cleanBitmap.recycle()
+            return@withContext uri
 
         } catch (e: Exception) {
-            Log.e(TAG, "Kare yakalama veya kaydetme sırasında hata: ${e.message}", e)
+            Log.e(TAG, "captureFrameOnDemand hatası: ${e.message}", e)
             return@withContext null
         } finally {
             try {
-                image?.close()
-                if (bitmap != null && bitmap != cleanBitmap && !bitmap.isRecycled) {
-                    bitmap.recycle()
-                }
+                virtualDisplay?.release()
+                imageReader.close()
+                handlerThread.quitSafely()
             } catch (ignored: Exception) {}
         }
     }
 
     /**
-     * Yakalanan Bitmap nesnesini cihazın Pictures/Screenshots galerisine kaydeder.
+     * Yakalanan Bitmap nesnesini cihazın Pictures/ScreenCaptures galerisine kaydeder.
      */
-    private fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? {
+    fun saveBitmapToGallery(context: Context, bitmap: Bitmap): Uri? {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         val fileName = "ScreenOverlay_$timeStamp.jpg"
         val resolver = context.contentResolver
@@ -166,7 +205,6 @@ object FrameCaptureHelper {
                 Log.e(TAG, "Legacy kayıt hatası: ${e.message}", e)
             }
         }
-
         return null
     }
 }

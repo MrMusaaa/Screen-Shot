@@ -147,6 +147,10 @@ class FloatingOverlayService : Service() {
         resetBandToIdle()
     }
 
+    private val resultDismissRunnable = Runnable {
+        resetBandToIdle()
+    }
+
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
     /**
@@ -273,14 +277,30 @@ class FloatingOverlayService : Service() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
 
             resultThumbnail = ImageView(context).apply {
-                layoutParams = LinearLayout.LayoutParams(dpToPx(34), dpToPx(34)).apply {
+                layoutParams = LinearLayout.LayoutParams(dpToPx(36), dpToPx(36)).apply {
                     marginEnd = dpToPx(8)
                 }
                 background = GradientDrawable().apply {
-                    cornerRadius = dpToPx(6).toFloat()
+                    cornerRadius = dpToPx(8).toFloat()
                     setColor(Color.parseColor("#262A34"))
                 }
                 scaleType = ImageView.ScaleType.CENTER_CROP
+                setOnClickListener {
+                    val uri = CaptureStateManager.state.value.lastCapturedImageUri
+                    if (uri != null) {
+                        try {
+                            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "image/jpeg")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            startActivity(viewIntent)
+                        } catch (e: Exception) {
+                            startActivity(Intent(this@FloatingOverlayService, MainActivity::class.java).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            })
+                        }
+                    }
+                }
             }
             addView(resultThumbnail)
 
@@ -484,9 +504,9 @@ class FloatingOverlayService : Service() {
         // Butonları derhal gizle (fotoğrafta sadece şık bant gözüksün, SS butonu asla çıkmasın)
         bandButtonsContainer?.visibility = View.INVISIBLE
 
-        // EMNİYET ZAMANLAYICISI: 1.5 saniye sonra butonlar her koşulda geri gelir, asla kaybolmaz!
+        // EMNİYET ZAMANLAYICISI: 2.5 saniye sonra butonlar her koşulda geri gelir, asla kaybolmaz!
         mainHandler.removeCallbacks(safetyButtonRestorer)
-        mainHandler.postDelayed(safetyButtonRestorer, 1500)
+        mainHandler.postDelayed(safetyButtonRestorer, 2500)
 
         mainHandler.postDelayed({
             // Ekran görüntüsü servisini tetikle
@@ -533,10 +553,8 @@ class FloatingOverlayService : Service() {
             }
 
             // 6 saniye sonra normal butonlu moda geri dön
-            mainHandler.removeCallbacksAndMessages(null)
-            mainHandler.postDelayed({
-                resetBandToIdle()
-            }, 6000)
+            mainHandler.removeCallbacks(resultDismissRunnable)
+            mainHandler.postDelayed(resultDismissRunnable, 6000)
 
         } catch (e: Exception) {
             Log.e(TAG, "Önizleme gösterilemedi: ${e.message}", e)

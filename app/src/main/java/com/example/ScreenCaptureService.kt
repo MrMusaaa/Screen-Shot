@@ -210,17 +210,14 @@ class ScreenCaptureService : Service() {
         }, Handler(Looper.getMainLooper()))
 
         setupDisplayMetrics()
-        setupImageReader()
-        setupVirtualDisplay()
+        CaptureStateManager.updateServiceRunning(true)
+        Log.d(TAG, "MediaProjection oturumu hazır (İstek üzerine ekran yakalama devrede).")
     }
 
     private fun setupDisplayMetrics() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val metrics = wm.currentWindowMetrics
-            val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
-                android.view.WindowInsets.Type.systemBars()
-            )
             screenWidth = metrics.bounds.width()
             screenHeight = metrics.bounds.height()
             screenDensity = resources.displayMetrics.densityDpi
@@ -234,50 +231,26 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    private fun setupImageReader() {
-        imageReader?.close()
-        // PixelFormat.RGBA_8888 ile bellek tamponu hazırlanıyor
-        imageReader = ImageReader.newInstance(
-            screenWidth,
-            screenHeight,
-            PixelFormat.RGBA_8888,
-            2
-        )
-    }
-
-    private fun setupVirtualDisplay() {
-        virtualDisplay?.release()
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenCapture_Display",
-            screenWidth,
-            screenHeight,
-            screenDensity,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface,
-            null,
-            null
-        )
-        Log.d(TAG, "VirtualDisplay başarıyla kuruldu. Çözünürlük: ${screenWidth}x${screenHeight}")
-    }
-
     private fun takeScreenshot() {
-        val reader = imageReader
-        if (reader == null) {
-            Log.e(TAG, "ImageReader null, ekran görüntüsü alınamaz.")
+        val proj = mediaProjection
+        if (proj == null) {
+            Log.e(TAG, "MediaProjection null, ekran görüntüsü alınamaz.")
             CaptureStateManager.notifyCaptureResult(null)
             CaptureStateManager.showToast("Ekran servisi aktif değil! Lütfen ana uygulamadan ekran izni verin.")
             return
         }
 
         serviceScope.launch {
-            // Butonların gizlenip ekranın güncellenmesi için bekle
-            delay(100)
+            // Butonların ve animasyonun temizlenmesi için kısa gecikme
+            delay(120)
+            setupDisplayMetrics()
 
-            val uri = FrameCaptureHelper.captureAndSaveFrame(
-                imageReader = reader,
+            val uri = FrameCaptureHelper.captureFrameOnDemand(
+                mediaProjection = proj,
                 context = applicationContext,
                 screenWidth = screenWidth,
-                screenHeight = screenHeight
+                screenHeight = screenHeight,
+                screenDensity = screenDensity
             )
 
             if (uri != null) {
@@ -299,11 +272,25 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startRecording() {
+        val proj = mediaProjection ?: run {
+            CaptureStateManager.showToast("Ekran izni aktif değil!")
+            return
+        }
         val recorder = mediaRecorderManager ?: return
         try {
+            setupDisplayMetrics()
             val surface = recorder.prepareRecorder(screenWidth, screenHeight, includeAudio)
-            // VirtualDisplay yüzeyini MediaRecorder'a aktar
-            virtualDisplay?.surface = surface
+            virtualDisplay?.release()
+            virtualDisplay = proj.createVirtualDisplay(
+                "ScreenCapture_VideoRecording",
+                screenWidth,
+                screenHeight,
+                screenDensity,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                surface,
+                null,
+                null
+            )
             recorder.startRecording()
             CaptureStateManager.updateRecording(isRecording = true, durationSec = 0)
             updateNotification("Ekran video kaydı yapılıyor...")
@@ -311,8 +298,8 @@ class ScreenCaptureService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Kayıt başlatılamadı: ${e.message}", e)
             CaptureStateManager.showToast("Kayıt başlatılamadı: ${e.message}")
-            // Geri ImageReader'a bağla
-            virtualDisplay?.surface = imageReader?.surface
+            virtualDisplay?.release()
+            virtualDisplay = null
         }
     }
 
@@ -322,8 +309,9 @@ class ScreenCaptureService : Service() {
             val videoUri = withContext(Dispatchers.IO) {
                 recorder.stopRecording()
             }
-            // VirtualDisplay yüzeyini tekrar ImageReader'a döndür
-            virtualDisplay?.surface = imageReader?.surface
+            virtualDisplay?.release()
+            virtualDisplay = null
+
             CaptureStateManager.updateRecording(isRecording = false, durationSec = 0)
             updateNotification("Ekran Yakalama ve Yüzen Menü Aktif")
 

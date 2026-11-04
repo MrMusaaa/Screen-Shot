@@ -22,6 +22,8 @@ sealed interface CaptureEvent {
     object TriggerScreenshot : CaptureEvent
     object TriggerToggleRecording : CaptureEvent
     data class ShowToast(val message: String) : CaptureEvent
+    data class CaptureResult(val uri: Uri?) : CaptureEvent
+    data class VideoResult(val uri: Uri?) : CaptureEvent
 }
 
 object CaptureStateManager {
@@ -65,11 +67,17 @@ object CaptureStateManager {
         )
     }
 
+    fun notifyCaptureResult(uri: Uri?) {
+        setLastCapturedImage(uri)
+        _events.tryEmit(CaptureEvent.CaptureResult(uri))
+    }
+
     fun setLastCapturedVideo(uri: Uri?) {
         _state.value = _state.value.copy(
             lastCapturedVideoUri = uri,
             statusMessage = if (uri != null) "Video kaydı kaydedildi!" else null
         )
+        _events.tryEmit(CaptureEvent.VideoResult(uri))
     }
 
     fun triggerScreenshot() {

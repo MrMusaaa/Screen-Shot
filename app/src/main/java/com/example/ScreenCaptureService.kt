@@ -261,10 +261,17 @@ class ScreenCaptureService : Service() {
     }
 
     private fun takeScreenshot() {
-        val reader = imageReader ?: return
+        val reader = imageReader
+        if (reader == null) {
+            Log.e(TAG, "ImageReader null, ekran görüntüsü alınamaz.")
+            CaptureStateManager.notifyCaptureResult(null)
+            CaptureStateManager.showToast("Ekran servisi aktif değil! Lütfen ana uygulamadan ekran izni verin.")
+            return
+        }
+
         serviceScope.launch {
-            // Küçük bir bekleme: Eğer yüzen buton gizleniyorsa ekran çiziminin tamamlanmasını bekle
-            delay(120)
+            // Butonların gizlenip ekranın güncellenmesi için bekle
+            delay(100)
 
             val uri = FrameCaptureHelper.captureAndSaveFrame(
                 imageReader = reader,
@@ -274,9 +281,10 @@ class ScreenCaptureService : Service() {
             )
 
             if (uri != null) {
-                CaptureStateManager.setLastCapturedImage(uri)
-                CaptureStateManager.showToast("Ekran görüntüsü galeriye kaydedildi!")
+                CaptureStateManager.notifyCaptureResult(uri)
+                CaptureStateManager.showToast("Ekran görüntüsü kaydedildi!")
             } else {
+                CaptureStateManager.notifyCaptureResult(null)
                 CaptureStateManager.showToast("Ekran görüntüsü alınamadı.")
             }
         }

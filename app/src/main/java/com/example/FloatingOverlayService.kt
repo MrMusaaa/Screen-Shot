@@ -1,16 +1,21 @@
 package com.example
 
+import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
@@ -33,9 +38,12 @@ import kotlinx.coroutines.flow.onEach
 /**
  * FloatingOverlayService
  * 
- * Ekranın üzerinde duran, Gemini Live benzeri ışıltılı yüzen simge (Floating Overlay).
- * Sürüklenebilir, ekran kenarlarına yapışabilir ve tıklandığında anlık ekran görüntüsü
- * alma ve video kaydı başlatma/durdurma menüsünü açar.
+ * Tam olarak Android üzerindeki Gemini Asistanı gibi çalışan yüzen ekran yakalama aracı.
+ * Ekranın altında şık, ışıltılı bir Gemini Bandı (Assistant Bar) ve kenara yaslanabilen
+ * yüzen bir Gemini simgesi sunar.
+ * 
+ * Ekran görüntüsü alındığında butonlar gizlenir ve sadece ışıltılı Gemini bandı görünür;
+ * ardından yakalanan ekran görüntüsü bant üzerinde önizleme ve paylaşım seçenekleriyle belirir.
  */
 class FloatingOverlayService : Service() {
 
@@ -56,26 +64,35 @@ class FloatingOverlayService : Service() {
     }
 
     private var windowManager: WindowManager? = null
-    private var rootOverlayLayout: FrameLayout? = null
-    private var floatingOrbView: FrameLayout? = null
-    private var expandedMenuView: LinearLayout? = null
-    private var recordingBadge: TextView? = null
 
-    private lateinit var windowParams: WindowManager.LayoutParams
+    // 1. Ana Gemini Asistan Bandı (Alt Bant)
+    private var assistantBandLayout: FrameLayout? = null
+    private lateinit var bandParams: WindowManager.LayoutParams
+
+    // 2. Yüzen Küçük Simge (Bant simge durumuna küçüldüğünde)
+    private var floatingOrbLayout: FrameLayout? = null
+    private lateinit var orbParams: WindowManager.LayoutParams
+
+    // Bant içi dinamik görünümler
+    private var bandButtonsContainer: LinearLayout? = null
+    private var bandResultContainer: LinearLayout? = null
+    private var bandRecordingContainer: LinearLayout? = null
+    private var resultThumbnail: ImageView? = null
+    private var recordingTimerText: TextView? = null
+
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var isMenuExpanded = false
     private var screenWidth = 1080
     private var screenHeight = 1920
+    private var isBandVisible = true
 
-    // Sürükleme değişkenleri
+    // Sürükleme değişkenleri (Orb için)
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
     private var initialTouchY = 0f
     private var isDragging = false
-    private val touchSlop = 16f
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -88,36 +105,54 @@ class FloatingOverlayService : Service() {
         }
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        calculateScreenDimensions()
-        createFloatingWidget()
+        val dm = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        windowManager?.defaultDisplay?.getMetrics(dm)
+        screenWidth = dm.widthPixels
+        screenHeight = dm.heightPixels
 
-        // Dinleyici: State değişikliklerini dinle (Kayıt süresi, bildirimler)
+        createGeminiAssistantBand()
+        createFloatingOrb()
+
+        // State dinleyici
         CaptureStateManager.state.onEach { state ->
-            updateRecordingUI(state.isRecording, state.recordingDurationSec)
+            handleStateUpdate(state)
         }.launchIn(serviceScope)
 
         CaptureStateManager.events.onEach { event ->
-            if (event is CaptureEvent.ShowToast) {
-                Toast.makeText(applicationContext, event.message, Toast.LENGTH_SHORT).show()
+            when (event) {
+                is CaptureEvent.ShowToast -> {
+                    Toast.makeText(applicationContext, event.message, Toast.LENGTH_SHORT).show()
+                }
+                is CaptureEvent.CaptureResult -> {
+                    mainHandler.removeCallbacks(safetyButtonRestorer)
+                    if (event.uri != null) {
+                        showResultBanner(event.uri)
+                    } else {
+                        resetBandToIdle()
+                    }
+                }
+                is CaptureEvent.VideoResult -> {
+                    mainHandler.removeCallbacks(safetyButtonRestorer)
+                    resetBandToIdle()
+                }
+                else -> {}
             }
         }.launchIn(serviceScope)
 
         CaptureStateManager.updateOverlayActive(true)
     }
 
-    private fun calculateScreenDimensions() {
-        val dm = DisplayMetrics()
-        @Suppress("DEPRECATION")
-        windowManager?.defaultDisplay?.getMetrics(dm)
-        screenWidth = dm.widthPixels
-        screenHeight = dm.heightPixels
+    private val safetyButtonRestorer = Runnable {
+        resetBandToIdle()
     }
 
-    private fun dpToPx(dp: Int): Int {
-        return (dp * resources.displayMetrics.density).toInt()
-    }
+    private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
-    private fun createFloatingWidget() {
+    /**
+     * Gemini Asistanı Alt Bandını Oluşturur (Gemini Bant)
+     */
+    private fun createGeminiAssistantBand() {
         val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
@@ -125,194 +160,264 @@ class FloatingOverlayService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-        windowParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
+        bandParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             layoutType,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = dpToPx(24) // Ekranın altından biraz yukarıda yüzer
+        }
+
+        assistantBandLayout = FrameLayout(this).apply {
+            setPadding(dpToPx(16), 0, dpToPx(16), 0)
+            clipChildren = false
+            clipToPadding = false
+        }
+
+        // Dış Işıltılı Gradyan Bant Çerçevesi
+        val cardContainer = FrameLayout(this).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(
+                    Color.parseColor("#4285F4"), // Gemini Blue
+                    Color.parseColor("#9B51E0"), // Purple
+                    Color.parseColor("#00E5FF"), // Cyan
+                    Color.parseColor("#FF4081")  // Pink
+                )
+            ).apply {
+                cornerRadius = dpToPx(28).toFloat()
+            }
+            setPadding(dpToPx(2), dpToPx(2), dpToPx(2), dpToPx(2)) // 2dp ışıltılı kenar
+            elevation = dpToPx(12).toFloat()
+        }
+
+        // İç Koyu Frosted Gövde
+        val innerContent = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                cornerRadius = dpToPx(26).toFloat()
+                setColor(Color.parseColor("#F012141C")) // %94 koyu cam efekti
+            }
+            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
+        }
+
+        // 1. Sol Kısım: Gemini Yıldızı / Işıltı Simgesi
+        val geminiIcon = ImageView(this).apply {
+            setImageResource(android.R.drawable.btn_star_big_on)
+            setColorFilter(Color.parseColor("#00E5FF"))
+            layoutParams = LinearLayout.LayoutParams(dpToPx(26), dpToPx(26)).apply {
+                marginEnd = dpToPx(10)
+            }
+        }
+        innerContent.addView(geminiIcon)
+
+        // 2. Normal Durum: Butonlar Konteynırı
+        bandButtonsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+            // 📸 Ekran Görüntüsü Al Butonu (Gemini Pill)
+            addView(createPillButton("📸 Ekranı Çek", Color.parseColor("#4285F4")) {
+                handleAssistantScreenshot()
+            })
+
+            // 🎥 Video Kaydı Butonu
+            addView(createPillButton("🎥 Video", Color.parseColor("#9B51E0")) {
+                CaptureStateManager.triggerToggleRecording()
+            })
+        }
+        innerContent.addView(bandButtonsContainer)
+
+        // 3. Kayıt Durumu Konteynırı (Video kaydı esnasında)
+        bandRecordingContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+            val redDot = View(context).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor("#FF5252"))
+                }
+                layoutParams = LinearLayout.LayoutParams(dpToPx(12), dpToPx(12)).apply {
+                    marginEnd = dpToPx(8)
+                }
+            }
+            addView(redDot)
+
+            recordingTimerText = TextView(context).apply {
+                text = "Kayıt: 00:00"
+                textSize = 13f
+                setTextColor(Color.WHITE)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            addView(recordingTimerText)
+
+            addView(createPillButton("⏹ Durdur", Color.parseColor("#FF5252")) {
+                CaptureStateManager.triggerToggleRecording()
+            })
+        }
+        innerContent.addView(bandRecordingContainer)
+
+        // 4. Sonuç Durumu Konteynırı (SS alındıktan sonra beliren önizleme bandı)
+        bandResultContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+            resultThumbnail = ImageView(context).apply {
+                layoutParams = LinearLayout.LayoutParams(dpToPx(34), dpToPx(34)).apply {
+                    marginEnd = dpToPx(8)
+                }
+                background = GradientDrawable().apply {
+                    cornerRadius = dpToPx(6).toFloat()
+                    setColor(Color.parseColor("#262A34"))
+                }
+                scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            addView(resultThumbnail)
+
+            val statusText = TextView(context).apply {
+                text = "Kaydedildi"
+                textSize = 12f
+                setTextColor(Color.parseColor("#00E5FF"))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            addView(statusText)
+
+            addView(createPillButton("Paylaş", Color.parseColor("#4285F4")) {
+                val uri = CaptureStateManager.state.value.lastCapturedImageUri
+                if (uri != null) {
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/jpeg"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    startActivity(Intent.createChooser(shareIntent, "Ekran Görüntüsünü Paylaş").apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    })
+                }
+            })
+
+            addView(createPillButton("Galeri", Color.parseColor("#34A853")) {
+                startActivity(Intent(this@FloatingOverlayService, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                })
+            })
+
+            addView(createPillButton("✕", Color.parseColor("#757575")) {
+                resetBandToIdle()
+            })
+        }
+        innerContent.addView(bandResultContainer)
+
+        // 5. Sağ Kısım: Küçültme (Minimize) Butonu
+        val minimizeBtn = TextView(this).apply {
+            text = "✕"
+            textSize = 14f
+            setTextColor(Color.parseColor("#8E99A8"))
+            setPadding(dpToPx(10), dpToPx(6), dpToPx(10), dpToPx(6))
+            setOnClickListener {
+                switchViewMode(showBand = false)
+            }
+        }
+        innerContent.addView(minimizeBtn)
+
+        cardContainer.addView(innerContent)
+        assistantBandLayout?.addView(cardContainer)
+
+        windowManager?.addView(assistantBandLayout, bandParams)
+    }
+
+    private fun createPillButton(text: String, accentColor: Int, onClick: () -> Unit): TextView {
+        return TextView(this).apply {
+            this.text = text
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dpToPx(12), dpToPx(6), dpToPx(12), dpToPx(6))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginEnd = dpToPx(6)
+            }
+            background = GradientDrawable().apply {
+                cornerRadius = dpToPx(16).toFloat()
+                setColor(Color.parseColor("#262A34"))
+                setStroke(dpToPx(1), accentColor)
+            }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    /**
+     * Yüzen Küçük Simge (Bant küçüldüğünde ekranda durur)
+     */
+    private fun createFloatingOrb() {
+        val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+        val orbSize = dpToPx(56)
+
+        orbParams = WindowManager.LayoutParams(
+            orbSize,
+            orbSize,
+            layoutType,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = screenWidth - dpToPx(76)
-            y = screenHeight / 3
+            x = screenWidth - dpToPx(68)
+            y = screenHeight / 2
         }
 
-        rootOverlayLayout = FrameLayout(this).apply {
-            clipChildren = false
-            clipToPadding = false
-        }
-
-        // 1. Ana Yüzen Orb (Gemini Live benzeri)
-        floatingOrbView = createGeminiOrbView()
-
-        // 2. Açılır Menü (Quick Actions)
-        expandedMenuView = createExpandedMenuView().apply {
+        floatingOrbLayout = FrameLayout(this).apply {
             visibility = View.GONE
-        }
 
-        // Kapsayıcıya ekle
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.END
-            clipChildren = false
-            clipToPadding = false
-            addView(expandedMenuView)
-            addView(floatingOrbView)
-        }
-
-        rootOverlayLayout?.addView(container)
-        windowManager?.addView(rootOverlayLayout, windowParams)
-
-        setupTouchListener()
-    }
-
-    /**
-     * Gemini Live tarzı parıldayan dairesel yüzen simge
-     */
-    private fun createGeminiOrbView(): FrameLayout {
-        val orbSize = dpToPx(60)
-
-        return FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(orbSize, orbSize).apply {
-                setMargins(dpToPx(8), dpToPx(8), dpToPx(8), dpToPx(8))
-            }
-
-            // Dış gradyan çerçeve (Gemini Cyan & Purple)
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
-                intArrayOf(Color.parseColor("#4285F4"), Color.parseColor("#9B51E0"), Color.parseColor("#34A853"))
-            ).apply {
-                shape = GradientDrawable.OVAL
-            }
+                intArrayOf(Color.parseColor("#4285F4"), Color.parseColor("#9B51E0"), Color.parseColor("#00E5FF"))
+            ).apply { shape = GradientDrawable.OVAL }
             setPadding(dpToPx(3), dpToPx(3), dpToPx(3), dpToPx(3))
 
-            // İç koyu gövde
-            val innerView = FrameLayout(context).apply {
+            val inner = FrameLayout(context).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(Color.parseColor("#13131A"))
+                    setColor(Color.parseColor("#12141C"))
                 }
             }
 
-            // Merkez İkon (Kamera / Sparkle)
             val icon = ImageView(context).apply {
-                setImageResource(android.R.drawable.ic_menu_camera)
-                setColorFilter(Color.WHITE)
-                val iconSize = dpToPx(28)
-                layoutParams = FrameLayout.LayoutParams(iconSize, iconSize, Gravity.CENTER)
+                setImageResource(android.R.drawable.btn_star_big_on)
+                setColorFilter(Color.parseColor("#00E5FF"))
+                layoutParams = FrameLayout.LayoutParams(dpToPx(24), dpToPx(24), Gravity.CENTER)
             }
-            innerView.addView(icon)
-
-            // Kayıt rozeti (Kırmızı nokta / Sayaç)
-            recordingBadge = TextView(context).apply {
-                textSize = 10f
-                setTextColor(Color.WHITE)
-                gravity = Gravity.CENTER
-                visibility = View.GONE
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.RECTANGLE
-                    cornerRadius = dpToPx(8).toFloat()
-                    setColor(Color.parseColor("#E53935"))
-                }
-                setPadding(dpToPx(4), dpToPx(1), dpToPx(4), dpToPx(1))
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT,
-                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                ).apply {
-                    bottomMargin = dpToPx(2)
-                }
-            }
-            innerView.addView(recordingBadge)
-
-            addView(innerView)
-            elevation = dpToPx(8).toFloat()
+            inner.addView(icon)
+            addView(inner)
         }
+
+        windowManager?.addView(floatingOrbLayout, orbParams)
+        setupOrbTouchListener()
     }
 
-    /**
-     * Tıklanınca açılan eylem menüsü (Screenshot, Video, Uygulama, Kapat)
-     */
-    private fun createExpandedMenuView(): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dpToPx(10), dpToPx(10), dpToPx(10), dpToPx(10))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(8)
-            }
-
-            // Glassmorphic koyu arka plan
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dpToPx(18).toFloat()
-                setColor(Color.parseColor("#E61A1C24")) // %90 opak koyu gri
-                setStroke(dpToPx(1), Color.parseColor("#384252"))
-            }
-            elevation = dpToPx(12).toFloat()
-
-            // 1. Ekran Görüntüsü Al Butonu
-            addView(createActionButton("📸 Ekran Görüntüsü Al", Color.parseColor("#2979FF")) {
-                handleTakeScreenshot()
-            })
-
-            // 2. Video Kaydı Butonu
-            addView(createActionButton("🎥 Kayıt Başlat / Bitir", Color.parseColor("#FF5252")) {
-                handleToggleRecording()
-            })
-
-            // 3. Ana Uygulamayı Aç Butonu
-            addView(createActionButton("📱 Galeri & Ayarlar", Color.parseColor("#00E676")) {
-                val appIntent = Intent(this@FloatingOverlayService, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-                }
-                startActivity(appIntent)
-                toggleMenu(false)
-            })
-
-            // 4. Kapat Butonu
-            addView(createActionButton("✕ Kapat", Color.parseColor("#757575")) {
-                toggleMenu(false)
-                stopSelf()
-            })
-        }
-    }
-
-    private fun createActionButton(label: String, accentColor: Int, onClick: () -> Unit): TextView {
-        return TextView(this).apply {
-            text = label
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dpToPx(12), dpToPx(8), dpToPx(12), dpToPx(8))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, dpToPx(3), 0, dpToPx(3))
-            }
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = dpToPx(12).toFloat()
-                setColor(Color.parseColor("#262A34"))
-            }
-
-            setOnClickListener {
-                onClick()
-            }
-        }
-    }
-
-    private fun setupTouchListener() {
-        floatingOrbView?.setOnTouchListener { _, event ->
+    private fun setupOrbTouchListener() {
+        floatingOrbLayout?.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    initialX = windowParams.x
-                    initialY = windowParams.y
+                    initialX = orbParams.x
+                    initialY = orbParams.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
                     isDragging = false
@@ -321,22 +426,30 @@ class FloatingOverlayService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - initialTouchX
                     val dy = event.rawY - initialTouchY
-
-                    if (Math.abs(dx) > touchSlop || Math.abs(dy) > touchSlop) {
+                    if (Math.abs(dx) > 16f || Math.abs(dy) > 16f) {
                         isDragging = true
-                        windowParams.x = (initialX + dx).toInt()
-                        windowParams.y = (initialY + dy).toInt()
-                        windowManager?.updateViewLayout(rootOverlayLayout, windowParams)
+                        orbParams.x = (initialX + dx).toInt()
+                        orbParams.y = (initialY + dy).toInt()
+                        windowManager?.updateViewLayout(floatingOrbLayout, orbParams)
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isDragging) {
-                        // Tıklama olayı
-                        toggleMenu(!isMenuExpanded)
+                        // Tıklama -> Gemini Bandını Geri Aç
+                        switchViewMode(showBand = true)
                     } else {
-                        // Sürükleme bitti -> En yakın ekrana yapış (Snap to edge)
-                        snapToNearestEdge()
+                        // Kenara yapış
+                        val currentX = orbParams.x
+                        val targetX = if (currentX + dpToPx(28) > screenWidth / 2) screenWidth - dpToPx(68) else dpToPx(12)
+                        val animator = ValueAnimator.ofInt(currentX, targetX).apply {
+                            duration = 200
+                            addUpdateListener {
+                                orbParams.x = it.animatedValue as Int
+                                windowManager?.updateViewLayout(floatingOrbLayout, orbParams)
+                            }
+                        }
+                        animator.start()
                     }
                     true
                 }
@@ -345,73 +458,106 @@ class FloatingOverlayService : Service() {
         }
     }
 
-    private fun snapToNearestEdge() {
-        val currentX = windowParams.x
-        val targetX = if (currentX + dpToPx(30) > screenWidth / 2) {
-            screenWidth - dpToPx(76) // Sağ kenar
-        } else {
-            dpToPx(12) // Sol kenar
-        }
+    private fun switchViewMode(showBand: Boolean) {
+        isBandVisible = showBand
+        assistantBandLayout?.visibility = if (showBand) View.VISIBLE else View.GONE
+        floatingOrbLayout?.visibility = if (!showBand) View.VISIBLE else View.GONE
+    }
 
-        val animator = ValueAnimator.ofInt(currentX, targetX).apply {
-            duration = 200
-            interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener { anim ->
-                windowParams.x = anim.animatedValue as Int
-                windowManager?.updateViewLayout(rootOverlayLayout, windowParams)
+    /**
+     * Gemini Asistanı Gibi Ekran Görüntüsü Alma Akışı:
+     * 1. Butonlar gizlenir (kullanıcının istediği gibi fotoğrafta butonlar çıkmaz, sadece zarif bant kalır).
+     * 2. SurfaceFlinger'dan temiz kare yakalanır.
+     * 3. Yakalanan kare hemen bant üzerinde önizleme olarak belirir.
+     */
+    private fun handleAssistantScreenshot() {
+        if (!CaptureStateManager.state.value.isServiceRunning || !CaptureStateManager.state.value.isProjectionReady) {
+            Toast.makeText(this, "Lütfen önce ana uygulamadan Ekran İzni verin!", Toast.LENGTH_LONG).show()
+            val appIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }
+            startActivity(appIntent)
+            resetBandToIdle()
+            return
         }
-        animator.start()
-    }
 
-    private fun toggleMenu(expand: Boolean) {
-        isMenuExpanded = expand
-        expandedMenuView?.visibility = if (expand) View.VISIBLE else View.GONE
-    }
+        // Butonları derhal gizle (fotoğrafta sadece şık bant gözüksün, SS butonu asla çıkmasın)
+        bandButtonsContainer?.visibility = View.INVISIBLE
 
-    private fun handleTakeScreenshot() {
-        toggleMenu(false)
-
-        // Ekran görüntüsünde yüzen simgenin çıkmaması için 150ms gizle
-        rootOverlayLayout?.alpha = 0f
+        // EMNİYET ZAMANLAYICISI: 1.5 saniye sonra butonlar her koşulda geri gelir, asla kaybolmaz!
+        mainHandler.removeCallbacks(safetyButtonRestorer)
+        mainHandler.postDelayed(safetyButtonRestorer, 1500)
 
         mainHandler.postDelayed({
+            // Ekran görüntüsü servisini tetikle
             CaptureStateManager.triggerScreenshot()
-            // Ekran görüntüsü tamamlandıktan sonra tekrar görünür yap
-            mainHandler.postDelayed({
-                rootOverlayLayout?.alpha = 1f
-            }, 300)
-        }, 150)
+        }, 120)
     }
 
-    private fun handleToggleRecording() {
-        toggleMenu(false)
-        CaptureStateManager.triggerToggleRecording()
-    }
-
-    private fun updateRecordingUI(isRecording: Boolean, durationSec: Int) {
+    private fun handleStateUpdate(state: CaptureState) {
         mainHandler.post {
-            if (isRecording) {
-                recordingBadge?.visibility = View.VISIBLE
-                val minutes = durationSec / 60
-                val seconds = durationSec % 60
-                recordingBadge?.text = String.format("%02d:%02d", minutes, seconds)
+            // Video kaydı durumu
+            if (state.isRecording) {
+                bandButtonsContainer?.visibility = View.GONE
+                bandResultContainer?.visibility = View.GONE
+                bandRecordingContainer?.visibility = View.VISIBLE
+                val m = state.recordingDurationSec / 60
+                val s = state.recordingDurationSec % 60
+                recordingTimerText?.text = String.format("Kayıt: %02d:%02d", m, s)
             } else {
-                recordingBadge?.visibility = View.GONE
+                bandRecordingContainer?.visibility = View.GONE
+                if (bandResultContainer?.visibility != View.VISIBLE) {
+                    bandButtonsContainer?.visibility = View.VISIBLE
+                }
             }
+        }
+    }
+
+    private fun showResultBanner(imageUri: Uri) {
+        try {
+            bandButtonsContainer?.visibility = View.GONE
+            bandRecordingContainer?.visibility = View.GONE
+            bandResultContainer?.visibility = View.VISIBLE
+
+            // Küçük önizleme resmini yükle
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val source = ImageDecoder.createSource(contentResolver, imageUri)
+                val bitmap = ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                    decoder.setTargetSampleSize(4)
+                }
+                resultThumbnail?.setImageBitmap(bitmap)
+            } else {
+                @Suppress("DEPRECATION")
+                val bitmap = MediaStore.Images.Media.getBitmap(contentResolver, imageUri)
+                resultThumbnail?.setImageBitmap(bitmap)
+            }
+
+            // 6 saniye sonra normal butonlu moda geri dön
+            mainHandler.removeCallbacksAndMessages(null)
+            mainHandler.postDelayed({
+                resetBandToIdle()
+            }, 6000)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Önizleme gösterilemedi: ${e.message}", e)
+            resetBandToIdle()
+        }
+    }
+
+    private fun resetBandToIdle() {
+        mainHandler.post {
+            bandResultContainer?.visibility = View.GONE
+            bandRecordingContainer?.visibility = View.GONE
+            bandButtonsContainer?.visibility = View.VISIBLE
         }
     }
 
     override fun onDestroy() {
         CaptureStateManager.updateOverlayActive(false)
         try {
-            if (rootOverlayLayout != null) {
-                windowManager?.removeView(rootOverlayLayout)
-                rootOverlayLayout = null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Overlay kaldırılırken hata: ${e.message}", e)
-        }
+            if (assistantBandLayout != null) windowManager?.removeView(assistantBandLayout)
+            if (floatingOrbLayout != null) windowManager?.removeView(floatingOrbLayout)
+        } catch (ignored: Exception) {}
         super.onDestroy()
     }
 }

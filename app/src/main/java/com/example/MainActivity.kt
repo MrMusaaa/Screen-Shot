@@ -459,14 +459,14 @@ fun ControlPanelTab(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Yüzen Simge (Gemini Live Orb)",
+                        text = "Gemini Asistan Bandı & Yüzen Simge",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = TextPrimary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Ekranda sürüklenebilen ve kenara yaslanan Gemini tarzı yüzen buton.",
+                        text = "Gemini asistanı gibi ekranın altında duran ışıltılı bant. Ekran görüntüsü alırken butonlar otomatik gizlenir, sadece şık bant görünür ve çekilen fotoğraf hemen bantta önizlenir.",
                         fontSize = 12.sp,
                         color = TextSecondary
                     )
@@ -491,7 +491,7 @@ fun ControlPanelTab(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (captureState.isOverlayActive) "Yüzen Simgeyi Gizle" else "Yüzen Simgeyi Ekrana Getir",
+                            text = if (captureState.isOverlayActive) "Gemini Bandını Gizle" else "Gemini Asistan Bandını Aç",
                             fontWeight = FontWeight.Bold
                         )
                     }

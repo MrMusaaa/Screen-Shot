@@ -46,10 +46,22 @@ object FrameCaptureHelper {
         var cleanBitmap: Bitmap? = null
 
         try {
-            // Tampondaki en güncel ekran karesini al
-            image = imageReader.acquireLatestImage()
+            // Tampondaki en güncel ekran karesini al (kare gelene kadar kısa aralıklarla bekle)
+            var attempts = 0
+            while (image == null && attempts < 15) {
+                image = try {
+                    imageReader.acquireLatestImage() ?: imageReader.acquireNextImage()
+                } catch (e: Exception) {
+                    null
+                }
+                if (image == null) {
+                    kotlinx.coroutines.delay(30)
+                    attempts++
+                }
+            }
+
             if (image == null) {
-                Log.w(TAG, "ImageReader tamponunda okunabilir kare bulunamadı.")
+                Log.w(TAG, "ImageReader tamponunda okunabilir kare bulunamadı ($attempts deneme sonrası).")
                 return@withContext null
             }
 

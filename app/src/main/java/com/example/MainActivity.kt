@@ -397,147 +397,78 @@ fun ControlPanelTab(
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. İzinler Kartı
+        // 1. Ana Asistan & Güç Tuşu Hero Kartı
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder),
-                shape = RoundedCornerShape(16.dp)
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, GeminiPurple),
+                shape = RoundedCornerShape(18.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Gerekli İzinler & Yapılandırma",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(GeminiPurple.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CameraAlt,
+                                    contentDescription = null,
+                                    tint = GeminiCyan,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Gemini Güç Tuşu Asistanı",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextPrimary
+                                )
+                                Text(
+                                    text = "Sıfır Bildirim ile Gizli Yakalama",
+                                    fontSize = 11.sp,
+                                    color = GeminiCyan
+                                )
+                            }
+                        }
 
-                    // Overlay İzni
-                    PermissionItem(
-                        icon = Icons.Default.Layers,
-                        title = "Yüzen Simge (Overlay)",
-                        description = "Ekranın üzerinde görünme izni",
-                        isGranted = hasOverlayPermission,
-                        onRequest = onRequestOverlay,
-                        testTag = "overlay_permission_button"
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // MediaProjection İzni
-                    PermissionItem(
-                        icon = Icons.Default.ScreenShare,
-                        title = "Ekran Paylaşımı (MediaProjection)",
-                        description = "VirtualDisplay ve ImageReader erişimi",
-                        isGranted = captureState.isProjectionReady,
-                        onRequest = onRequestMediaProjection,
-                        testTag = "projection_permission_button"
-                    )
-
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        PermissionItem(
-                            icon = Icons.Default.Notifications,
-                            title = "Bildirim İzni",
-                            description = "Foreground servisi arka planda tutmak için",
-                            isGranted = hasNotificationPermission,
-                            onRequest = onRequestNotification,
-                            testTag = "notification_permission_button"
-                        )
+                        // Durum Rozeti
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (captureState.isServiceRunning) GeminiGreen.copy(alpha = 0.2f) else GeminiBlue.copy(alpha = 0.2f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (captureState.isRecording) "🔴 Kayıt Sürüyor" else if (captureState.isServiceRunning) "Hazır" else "İzin Gerekli",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (captureState.isRecording) GeminiRed else if (captureState.isServiceRunning) GeminiGreen else GeminiBlue
+                            )
+                        }
                     }
-                }
-            }
-        }
 
-        // 2. Yüzen Simge ve Servis Kontrolü
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                    Spacer(modifier = Modifier.height(14.dp))
+
                     Text(
-                        text = "Gemini Asistan Bandı & Yüzen Simge",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Gemini asistanı gibi ekranın altında duran ışıltılı bant. Ekran görüntüsü alırken butonlar otomatik gizlenir, sadece şık bant görünür ve çekilen fotoğraf hemen bantta önizlenir.",
+                        text = "Tıpkı orijinal Gemini Asistan gibi; Güç tuşuna basarak doğrudan Android OS seviyesinde ekran görüntüsü ve ekran kaydı alın. Kamuya açık galeriye yazılmaz, karşı tarafa (Instagram/Snapchat/WhatsApp) SIFIR BİLDİRİM gider.",
                         fontSize = 12.sp,
-                        color = TextSecondary
+                        color = TextSecondary,
+                        lineHeight = 16.sp
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Button(
-                        onClick = onToggleFloatingOverlay,
-                        enabled = hasOverlayPermission,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (captureState.isOverlayActive) GeminiRed else GeminiCyan,
-                            contentColor = if (captureState.isOverlayActive) Color.White else Color.Black
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("toggle_floating_overlay_button")
-                    ) {
-                        Icon(
-                            imageVector = if (captureState.isOverlayActive) Icons.Default.Close else Icons.Default.Layers,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (captureState.isOverlayActive) "Gemini Bandını Gizle" else "Gemini Asistan Bandını Aç",
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    if (!hasOverlayPermission) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "⚠ Yüzen simgeyi açmak için yukarıdan Overlay İzni vermelisiniz.",
-                            fontSize = 11.sp,
-                            color = GeminiRed
-                        )
-                    }
-                }
-            }
-        }
-
-        // 2.5 Gemini Cihaz Asistanı (Güç Tuşu Entegrasyonu)
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                border = androidx.compose.foundation.BorderStroke(1.dp, GeminiPurple.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.CameraAlt,
-                            contentDescription = null,
-                            tint = GeminiCyan,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Güç Tuşu ile Asistan Yakalama",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Tıpkı orijinal Gemini gibi; Güç tuşuna basılı tutarak doğrudan Android OS seviyesinde ekran görüntüsü alın. Özel uygulama alanında saklandığı için karşı tarafa (Instagram/Snapchat/WhatsApp) SIFIR BİLDİRİM gider.",
-                        fontSize = 12.sp,
-                        color = TextSecondary
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
+                    // 1. Buton: Varsayılan Asistan Olarak Ata
                     Button(
                         onClick = {
                             try {
@@ -570,10 +501,84 @@ fun ControlPanelTab(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Varsayılan Asistan Olarak Ayarla (Güç Tuşu)",
+                            text = "1. Varsayılan Asistan Olarak Ata (Güç Tuşu)",
                             fontWeight = FontWeight.Bold
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // 2. Buton: Ekran Video Kaydı İzni (MediaProjection)
+                    Button(
+                        onClick = onRequestMediaProjection,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (captureState.isProjectionReady) DarkSurfaceVariant else GeminiBlue,
+                            contentColor = if (captureState.isProjectionReady) GeminiGreen else Color.White
+                        ),
+                        border = if (captureState.isProjectionReady) androidx.compose.foundation.BorderStroke(1.dp, GeminiGreen) else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("projection_permission_button")
+                    ) {
+                        Icon(
+                            imageVector = if (captureState.isProjectionReady) Icons.Default.CheckCircle else Icons.Default.ScreenShare,
+                            contentDescription = null,
+                            tint = if (captureState.isProjectionReady) GeminiGreen else Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (captureState.isProjectionReady) "✓ Ekran Kaydı İzni Verildi (Hazır)" else "2. Ekran Video Kaydı İznini Aç",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. Güç Tuşu Kullanım Kılavuzu Kartı (Atama Şeması)
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorder),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "⚡ Güç Tuşu Eylem Atamaları",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 1. Eylem: 1 Kez Basılı Tutma -> Ekran Görüntüsü
+                    ActionRuleItem(
+                        badge = "1 KEZ",
+                        badgeColor = GeminiCyan,
+                        title = "Ekran Görüntüsü Alır",
+                        description = "Güç tuşuna 1 kez basılı tutun. 750ms sonra gizlice ekran görüntüsü alınır ve özel alana kaydedilir (Tek titreşim onaylar)."
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 2. Eylem: 2 Kez Hızlı Basma -> Ekran Kaydını Başlat
+                    ActionRuleItem(
+                        badge = "2 KEZ HIZLI",
+                        badgeColor = GeminiPurple,
+                        title = "Ekran Video Kaydını Başlatır",
+                        description = "Güç tuşuna 2 kez hızlıca basın. Ekran görüntüsü iptal edilir ve gizli ekran video kaydı başlar (Çift titreşim onaylar)."
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 3. Eylem: Kayıt Sırasında 2 Kez Basma -> Kaydı Durdur
+                    ActionRuleItem(
+                        badge = "2 KEZ TEKRAR",
+                        badgeColor = GeminiRed,
+                        title = "Ekran Kaydını Durdurur",
+                        description = "Kayıt devam ederken güç tuşuna tekrar 2 kez basarak kaydı anında durdurup kaydedebilirsiniz."
+                    )
                 }
             }
         }
@@ -687,6 +692,53 @@ fun ControlPanelTab(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ActionRuleItem(
+    badge: String,
+    badgeColor: Color,
+    title: String,
+    description: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(DarkSurfaceVariant)
+            .padding(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(6.dp))
+                .background(badgeColor.copy(alpha = 0.2f))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = badge,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = badgeColor
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                lineHeight = 15.sp
+            )
         }
     }
 }

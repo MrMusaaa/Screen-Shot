@@ -88,6 +88,18 @@ object CaptureStateManager {
         _events.tryEmit(CaptureEvent.TriggerToggleRecording)
     }
 
+    fun triggerStartRecording() {
+        if (!_state.value.isRecording) {
+            _events.tryEmit(CaptureEvent.TriggerToggleRecording)
+        }
+    }
+
+    fun triggerStopRecording() {
+        if (_state.value.isRecording) {
+            _events.tryEmit(CaptureEvent.TriggerToggleRecording)
+        }
+    }
+
     fun showToast(message: String) {
         _events.tryEmit(CaptureEvent.ShowToast(message))
     }

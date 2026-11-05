@@ -177,33 +177,50 @@ object FrameCaptureHelper {
     }
 
     /**
-     * Kullanıcı isteğe bağlı olarak görseli cihazın ana genel galerisine aktarmak isterse kullanılır.
+     * Kullanıcı isteğe bağlı olarak görsel veya videoyu cihazın ana genel galerisine aktarmak isterse kullanılır.
      */
     fun exportToPublicGallery(context: Context, sourceFile: File): Uri? {
         try {
             val resolver = context.contentResolver
+            val isVideo = sourceFile.name.endsWith(".mp4", ignoreCase = true)
+
             val contentValues = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, sourceFile.name)
-                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ScreenCaptures")
-                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                if (isVideo) {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, sourceFile.name)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ScreenCaptures")
+                        put(MediaStore.Video.Media.IS_PENDING, 1)
+                    }
+                } else {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, sourceFile.name)
+                    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/ScreenCaptures")
+                        put(MediaStore.Images.Media.IS_PENDING, 1)
+                    }
                 }
             }
 
-            val imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-            if (imageUri != null) {
-                resolver.openOutputStream(imageUri)?.use { out ->
+            val tableUri = if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val mediaUri = resolver.insert(tableUri, contentValues)
+            if (mediaUri != null) {
+                resolver.openOutputStream(mediaUri)?.use { out ->
                     sourceFile.inputStream().use { input ->
                         input.copyTo(out)
                     }
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     contentValues.clear()
-                    contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(imageUri, contentValues, null, null)
+                    if (isVideo) {
+                        contentValues.put(MediaStore.Video.Media.IS_PENDING, 0)
+                    } else {
+                        contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                    }
+                    resolver.update(mediaUri, contentValues, null, null)
                 }
-                return imageUri
+                Log.d(TAG, "Dosya başarıyla genel galeriye aktarıldı: $mediaUri")
+                return mediaUri
             }
         } catch (e: Exception) {
             Log.e(TAG, "Kamu galerisine aktarma hatası: ${e.message}", e)

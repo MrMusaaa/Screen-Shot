@@ -326,7 +326,29 @@ class FloatingOverlayService : Service() {
                 }
             })
 
-            addView(createPillButton("Galeri", Color.parseColor("#34A853")) {
+            addView(createPillButton("Galeriye Kaydet", Color.parseColor("#00E5FF")) {
+                val uri = CaptureStateManager.state.value.lastCapturedImageUri
+                if (uri != null) {
+                    try {
+                        val capturesDir = java.io.File(filesDir, "captures")
+                        val lastFile = capturesDir.listFiles()
+                            ?.filter { it.isFile && (it.name.endsWith(".jpg") || it.name.endsWith(".mp4")) }
+                            ?.maxByOrNull { it.lastModified() }
+                        if (lastFile != null && lastFile.exists()) {
+                            val savedUri = FrameCaptureHelper.exportToPublicGallery(this@FloatingOverlayService, lastFile)
+                            if (savedUri != null) {
+                                Toast.makeText(this@FloatingOverlayService, "✓ Genel Galeriye (Fotoğraflar) aktarıldı!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(this@FloatingOverlayService, "Galeriye aktarılamadı.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(this@FloatingOverlayService, "Hata: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            })
+
+            addView(createPillButton("Uygulama", Color.parseColor("#34A853")) {
                 startActivity(Intent(this@FloatingOverlayService, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 })

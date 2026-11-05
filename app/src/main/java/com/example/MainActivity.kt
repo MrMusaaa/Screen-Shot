@@ -357,6 +357,21 @@ fun MainScreen() {
                     },
                     onShare = { item ->
                         shareMediaUri(context, item.uri, item.isVideo)
+                    },
+                    onExportToGallery = { item ->
+                        scope.launch {
+                            val file = item.file
+                            if (file != null && file.exists()) {
+                                val savedUri = FrameCaptureHelper.exportToPublicGallery(context, file)
+                                if (savedUri != null) {
+                                    Toast.makeText(context, "✓ Cihaz galerisine aktarıldı (Fotoğraflar)!", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Galeriye aktarılamadı.", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "Dosya bulunamadı.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 )
                 2 -> ArchitectureTab()
@@ -370,7 +385,18 @@ fun MainScreen() {
         MediaPreviewDialog(
             item = item,
             onDismiss = { previewItem = null },
-            onShare = { shareMediaUri(context, item.uri, item.isVideo) }
+            onShare = { shareMediaUri(context, item.uri, item.isVideo) },
+            onExportToGallery = {
+                val file = item.file
+                if (file != null && file.exists()) {
+                    val savedUri = FrameCaptureHelper.exportToPublicGallery(context, file)
+                    if (savedUri != null) {
+                        Toast.makeText(context, "✓ Cihaz galerisine aktarıldı (Fotoğraflar)!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "Galeriye aktarılamadı.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         )
     }
 }
@@ -552,32 +578,32 @@ fun ControlPanelTab(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // 1. Eylem: 1 Kez Basılı Tutma -> Ekran Görüntüsü
+                    // 1. Eylem: 2 Kez Hızlıca Güç Tuşuna Basma -> Ekran Videosu
                     ActionRuleItem(
-                        badge = "1 KEZ TUT",
-                        badgeColor = GeminiCyan,
-                        title = "Ekran Görüntüsü Alır",
-                        description = "Güç tuşuna 1 kez basılı tutun. Gizlice ekran görüntüsü alınır ve özel alana kaydedilir (Tek titreşim onaylar)."
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // 2. Eylem: 2 Kez Tetikleme -> Ekran Kaydını Başlat
-                    ActionRuleItem(
-                        badge = "2 KEZ BAS / TUT",
+                        badge = "2 KEZ HIZLICA BAS",
                         badgeColor = GeminiPurple,
-                        title = "Ekran Video Kaydını Başlatır",
-                        description = "Güç tuşuna 2 kez ardı ardına basılı tutun VEYA hızlıca 2 kez tıklayın (ekran kapanıp açıldığında). Çift titreşim ile gizli video kaydı başlar."
+                        title = "Ekran Video Kaydını Başlatır / Durdurur",
+                        description = "Güç tuşuna 2 kez hızlıca basın. Sessizce saniyede 5 kare HD çekilmeye başlar; tekrar 2 kez basıldığında kayıt bitip MP4 video olarak kaydedilir. Karşı tarafa SIFIR bildirim gider."
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // 3. Eylem: Kayıt Sırasında Basma -> Kaydı Durdur
+                    // 2. Eylem: 1 Kez Basılı Tutma -> Ekran Görüntüsü
                     ActionRuleItem(
-                        badge = "DURDUR",
-                        badgeColor = GeminiRed,
-                        title = "Ekran Kaydını Durdurur",
-                        description = "Kayıt devam ederken güç tuşuna basılı tutun veya 2 kez hızlıca basın; kayıt anında durdurulup özel alana kaydedilir."
+                        badge = "1 KEZ BASILI TUT",
+                        badgeColor = GeminiCyan,
+                        title = "Tek Kare Ekran Görüntüsü Alır",
+                        description = "Güç tuşuna 1 kez basılı tutun (Gemini Asistan). Tek bir sessiz anlık ekran görüntüsü alır ve kum havuzuna kaydeder."
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 3. Eylem: Galeriye Aktarma Tuşu
+                    ActionRuleItem(
+                        badge = "GALERİYE AKTAR",
+                        badgeColor = GeminiGreen,
+                        title = "İsteğe Bağlı Telefona Kaydetme",
+                        description = "Galeri sekmesindeki yeşil '✓ Galeriye Aktar' tuşu ile gizli kaydettiğiniz fotoğrafları ve videoları cihazın genel Fotoğraflar / Galeri albümüne tek tıkla aktarabilirsiniz."
                     )
                 }
             }
@@ -819,7 +845,8 @@ fun GalleryTab(
     onRefresh: () -> Unit,
     onItemClick: (CapturedMediaItem) -> Unit,
     onDelete: (CapturedMediaItem) -> Unit,
-    onShare: (CapturedMediaItem) -> Unit
+    onShare: (CapturedMediaItem) -> Unit,
+    onExportToGallery: (CapturedMediaItem) -> Unit
 ) {
     if (items.isEmpty()) {
         Box(
@@ -843,7 +870,7 @@ fun GalleryTab(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Yüzen simgeden veya kontrol panelinden ekran görüntüsü alın.",
+                    text = "Güç tuşuna basarak veya uygulamadan ekran kaydı / görüntüsü alın.",
                     color = TextSecondary.copy(alpha = 0.7f),
                     fontSize = 12.sp
                 )
@@ -859,7 +886,7 @@ fun GalleryTab(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${items.size} Yakalanan Dosya",
+                    text = "${items.size} Yakalanan Dosya (Gizli Sandbox)",
                     color = TextSecondary,
                     fontSize = 13.sp
                 )
@@ -939,7 +966,20 @@ fun GalleryTab(
                                         color = TextSecondary
                                     )
 
-                                    Row {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        // Galeriye Aktarma Butonu
+                                        IconButton(
+                                            onClick = { onExportToGallery(item) },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = "Galeriye Aktar",
+                                                tint = GeminiGreen,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         IconButton(
                                             onClick = { onShare(item) },
                                             modifier = Modifier.size(24.dp)
@@ -1071,7 +1111,8 @@ fun ArchStepItem(step: String, title: String, desc: String) {
 fun MediaPreviewDialog(
     item: CapturedMediaItem,
     onDismiss: () -> Unit,
-    onShare: () -> Unit
+    onShare: () -> Unit,
+    onExportToGallery: () -> Unit
 ) {
     val context = LocalContext.current
     Dialog(onDismissRequest = onDismiss) {
@@ -1137,15 +1178,27 @@ fun MediaPreviewDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
+                        onClick = onExportToGallery,
+                        colors = ButtonDefaults.buttonColors(containerColor = GeminiGreen),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Galeriye Aktar", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
                         onClick = onShare,
-                        colors = ButtonDefaults.buttonColors(containerColor = GeminiCyan)
+                        colors = ButtonDefaults.buttonColors(containerColor = GeminiCyan),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Default.Share, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Paylaş", color = Color.Black)
+                        Text("Paylaş", color = Color.Black, fontWeight = FontWeight.Bold)
                     }
                 }
             }

@@ -18,6 +18,7 @@ import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.VibrationEffect
@@ -132,6 +133,9 @@ class ScreenCaptureService : Service() {
         }?.launchIn(serviceScope)
     }
 
+    private var powerPressCount = 0
+    private var lastPowerPressTime = 0L
+
     private fun registerPowerButtonReceiver() {
         if (powerButtonReceiver != null) return
         val filter = IntentFilter().apply {
@@ -140,19 +144,31 @@ class ScreenCaptureService : Service() {
         }
         powerButtonReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                when (intent?.action) {
-                    Intent.ACTION_SCREEN_OFF -> {
-                        lastScreenOffTime = System.currentTimeMillis()
-                    }
-                    Intent.ACTION_SCREEN_ON -> {
-                        val now = System.currentTimeMillis()
-                        val diff = now - lastScreenOffTime
-                        // Kullanıcı güç tuşuna hızlıca iki kez bastığında ekran kapanıp açılır (80-1400ms)
-                        if (diff in 80..1400) {
-                            lastScreenOffTime = 0L
-                            Log.d(TAG, "⚡ Güç tuşuna 2 kez hızlı basıldı (Ekran kapandı-açıldı: ${diff}ms)")
-                            toggleRecording()
-                        }
+                val now = System.currentTimeMillis()
+                val action = intent?.action ?: return
+
+                if (action == Intent.ACTION_SCREEN_OFF) {
+                    lastScreenOffTime = now
+                    powerPressCount++
+                    lastPowerPressTime = now
+                } else if (action == Intent.ACTION_SCREEN_ON) {
+                    powerPressCount++
+                    val diff = now - lastScreenOffTime
+                    lastPowerPressTime = now
+
+                    // Ekran hızlıca kapandı ve açıldı (1 güç tuşu döngüsü veya 2. tıklama)
+                    Log.d(TAG, "⚡ Güç tuşu aktivitesi algılandı: count=$powerPressCount, diff=${diff}ms")
+                }
+
+                // 2 kez güç tuşuna basıldığında ekran durumu değişir (OFF -> ON veya hızlı basışlar)
+                // 1500ms içerisinde 2 kez durum değişimi veya kapandı-açıldı = Çift Basış!
+                if (powerPressCount >= 2 || (now - lastScreenOffTime in 80..1800)) {
+                    val timeDiff = now - lastPowerPressTime
+                    if (timeDiff < 2000) {
+                        powerPressCount = 0
+                        lastScreenOffTime = 0L
+                        Log.d(TAG, "⚡ Güç tuşuna 2 kez basıldı -> Video Kaydını Değiştir (Başlat / Durdur)")
+                        toggleRecording()
                     }
                 }
             }
@@ -340,6 +356,7 @@ class ScreenCaptureService : Service() {
     private var burstRecordJob: Job? = null
     private var burstTempDir: File? = null
     private val burstFrames = mutableListOf<File>()
+    private var burstHandlerThread: android.os.HandlerThread? = null
 
     private fun toggleRecording() {
         if (CaptureStateManager.state.value.isRecording) {
@@ -372,14 +389,82 @@ class ScreenCaptureService : Service() {
             val targetHeight = (720 * screenHeight / screenWidth).let { if (it % 2 == 0) it else it - 1 }
             val captureDensity = (screenDensity * targetWidth / screenWidth)
 
-            // Tek bir ImageReader üzerinden saniyede 5 kare (200ms) akıcı sessiz burst çekimi
+            // HandlerThread ile arka planda kesintisiz kare dinleyicisi
+            val handlerThread = HandlerThread("BurstCaptureThread").apply { start() }
+            val bgHandler = Handler(handlerThread.looper)
+            this.burstHandlerThread = handlerThread
+
             val imageReader = ImageReader.newInstance(
                 targetWidth,
                 targetHeight,
                 PixelFormat.RGBA_8888,
-                2
+                3
             )
             this.imageReader = imageReader
+
+            var frameIndex = 0
+            var lastCaptureTime = 0L
+            val frameIntervalMs = 200L // 5 FPS
+
+            imageReader.setOnImageAvailableListener({ reader ->
+                if (!CaptureStateManager.state.value.isRecording) return@setOnImageAvailableListener
+                val now = System.currentTimeMillis()
+                if (now - lastCaptureTime < frameIntervalMs) {
+                    try {
+                        reader.acquireLatestImage()?.close()
+                    } catch (ignored: Exception) {}
+                    return@setOnImageAvailableListener
+                }
+
+                val img = try {
+                    reader.acquireLatestImage()
+                } catch (e: Exception) {
+                    null
+                } ?: return@setOnImageAvailableListener
+
+                lastCaptureTime = now
+
+                try {
+                    val planes = img.planes
+                    if (planes.isNotEmpty()) {
+                        val buffer = planes[0].buffer
+                        val pixelStride = planes[0].pixelStride
+                        val rowStride = planes[0].rowStride
+                        val rowPadding = rowStride - pixelStride * targetWidth
+                        val bufferWidth = targetWidth + (if (pixelStride > 0) rowPadding / pixelStride else 0)
+
+                        val rawBitmap = Bitmap.createBitmap(
+                            bufferWidth,
+                            targetHeight,
+                            Bitmap.Config.ARGB_8888
+                        )
+                        rawBitmap.copyPixelsFromBuffer(buffer)
+                        img.close()
+
+                        val cleanBitmap = if (rowPadding > 0 || bufferWidth != targetWidth) {
+                            val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, targetWidth, targetHeight)
+                            rawBitmap.recycle()
+                            cropped
+                        } else {
+                            rawBitmap
+                        }
+
+                        val frameFile = File(tempDir, String.format(Locale.US, "frame_%05d.jpg", frameIndex++))
+                        FileOutputStream(frameFile).use { out ->
+                            cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                        }
+                        cleanBitmap.recycle()
+                        synchronized(burstFrames) {
+                            burstFrames.add(frameFile)
+                        }
+                    } else {
+                        img.close()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Burst kare yakalama hatası: ${e.message}")
+                    try { img.close() } catch (ignored: Exception) {}
+                }
+            }, bgHandler)
 
             val vDisplay = proj.createVirtualDisplay(
                 "ScreenCapture_BurstRecording",
@@ -389,7 +474,7 @@ class ScreenCaptureService : Service() {
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader.surface,
                 null,
-                null
+                bgHandler
             )
             this.virtualDisplay = vDisplay
 
@@ -400,72 +485,13 @@ class ScreenCaptureService : Service() {
 
             var secondsCounter = 0
             burstRecordJob = serviceScope.launch(Dispatchers.Default) {
-                var frameIndex = 0
-                val frameIntervalMs = 200L // 5 FPS (Telefonu asla kastırmayan pürüzsüz akış)
                 val startTime = System.currentTimeMillis()
-
                 while (CaptureStateManager.state.value.isRecording) {
-                    val loopStart = System.currentTimeMillis()
-                    val img = try {
-                        imageReader.acquireLatestImage()
-                    } catch (e: Exception) {
-                        null
-                    }
-
-                    if (img != null) {
-                        try {
-                            val planes = img.planes
-                            if (planes.isNotEmpty()) {
-                                val buffer = planes[0].buffer
-                                val pixelStride = planes[0].pixelStride
-                                val rowStride = planes[0].rowStride
-                                val rowPadding = rowStride - pixelStride * targetWidth
-                                val bufferWidth = targetWidth + (if (pixelStride > 0) rowPadding / pixelStride else 0)
-
-                                val rawBitmap = Bitmap.createBitmap(
-                                    bufferWidth,
-                                    targetHeight,
-                                    Bitmap.Config.ARGB_8888
-                                )
-                                rawBitmap.copyPixelsFromBuffer(buffer)
-                                img.close()
-
-                                val cleanBitmap = if (rowPadding > 0 || bufferWidth != targetWidth) {
-                                    val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, targetWidth, targetHeight)
-                                    rawBitmap.recycle()
-                                    cropped
-                                } else {
-                                    rawBitmap
-                                }
-
-                                val frameFile = File(tempDir, String.format(Locale.US, "frame_%05d.jpg", frameIndex++))
-                                FileOutputStream(frameFile).use { out ->
-                                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
-                                }
-                                cleanBitmap.recycle()
-                                synchronized(burstFrames) {
-                                    burstFrames.add(frameFile)
-                                }
-                            } else {
-                                img.close()
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Kare işleme hatası: ${e.message}")
-                            try { img.close() } catch (ignored: Exception) {}
-                        }
-                    }
-
-                    // Saniye sayacını güncelle
+                    delay(500)
                     val elapsedSec = ((System.currentTimeMillis() - startTime) / 1000).toInt()
                     if (elapsedSec != secondsCounter) {
                         secondsCounter = elapsedSec
                         CaptureStateManager.updateRecording(isRecording = true, durationSec = secondsCounter)
-                    }
-
-                    val spent = System.currentTimeMillis() - loopStart
-                    val sleepTime = frameIntervalMs - spent
-                    if (sleepTime > 0) {
-                        delay(sleepTime)
                     }
                 }
             }
@@ -492,6 +518,10 @@ class ScreenCaptureService : Service() {
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
+        try {
+            burstHandlerThread?.quitSafely()
+        } catch (ignored: Exception) {}
+        burstHandlerThread = null
 
         serviceScope.launch {
             val framesToEncode = synchronized(burstFrames) { burstFrames.toList() }
@@ -539,6 +569,10 @@ class ScreenCaptureService : Service() {
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
+        try {
+            burstHandlerThread?.quitSafely()
+        } catch (ignored: Exception) {}
+        burstHandlerThread = null
         burstTempDir?.deleteRecursively()
         burstFrames.clear()
         CaptureStateManager.updateRecording(isRecording = false, durationSec = 0)

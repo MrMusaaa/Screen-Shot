@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.File
+import java.io.FileOutputStream
+import java.util.Locale
 
 /**
  * ScreenCaptureService
@@ -332,6 +337,10 @@ class ScreenCaptureService : Service() {
         }
     }
 
+    private var burstRecordJob: Job? = null
+    private var burstTempDir: File? = null
+    private val burstFrames = mutableListOf<File>()
+
     private fun toggleRecording() {
         if (CaptureStateManager.state.value.isRecording) {
             stopRecording()
@@ -342,55 +351,197 @@ class ScreenCaptureService : Service() {
 
     private fun startRecording() {
         val proj = mediaProjection ?: run {
-            CaptureStateManager.showToast("Ekran izni aktif değil!")
+            CaptureStateManager.showToast("Ekran izni aktif değil! Lütfen uygulamadan izin verin.")
             return
         }
-        val recorder = mediaRecorderManager ?: return
+
+        if (CaptureStateManager.state.value.isRecording) return
+
         try {
             setupDisplayMetrics()
-            val surface = recorder.prepareRecorder(screenWidth, screenHeight, includeAudio)
-            virtualDisplay?.release()
-            virtualDisplay = proj.createVirtualDisplay(
-                "ScreenCapture_VideoRecording",
-                screenWidth,
-                screenHeight,
-                screenDensity,
+
+            // Geçici kare klasörü oluştur
+            val tempDir = File(cacheDir, "burst_rec_${System.currentTimeMillis()}").apply {
+                if (!exists()) mkdirs()
+            }
+            burstTempDir = tempDir
+            burstFrames.clear()
+
+            // 720p hedef çözünürlük (performans ve sıfır donma için)
+            val targetWidth = 720
+            val targetHeight = (720 * screenHeight / screenWidth).let { if (it % 2 == 0) it else it - 1 }
+            val captureDensity = (screenDensity * targetWidth / screenWidth)
+
+            // Tek bir ImageReader üzerinden saniyede 5 kare (200ms) akıcı sessiz burst çekimi
+            val imageReader = ImageReader.newInstance(
+                targetWidth,
+                targetHeight,
+                PixelFormat.RGBA_8888,
+                2
+            )
+            this.imageReader = imageReader
+
+            val vDisplay = proj.createVirtualDisplay(
+                "ScreenCapture_BurstRecording",
+                targetWidth,
+                targetHeight,
+                captureDensity,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                surface,
+                imageReader.surface,
                 null,
                 null
             )
-            recorder.startRecording()
+            this.virtualDisplay = vDisplay
+
             CaptureStateManager.updateRecording(isRecording = true, durationSec = 0)
-            updateNotification("Ekran video kaydı yapılıyor...")
+            updateNotification("Sessiz ekran kareleri kaydediliyor...")
             vibrateFeedback(longArrayOf(0, 80, 80, 80))
-            CaptureStateManager.showToast("🎥 Ekran kaydı başladı")
+            CaptureStateManager.showToast("🎥 Sessiz Ekran Kaydı Başladı (Sıfır Bildirim)")
+
+            var secondsCounter = 0
+            burstRecordJob = serviceScope.launch(Dispatchers.Default) {
+                var frameIndex = 0
+                val frameIntervalMs = 200L // 5 FPS (Telefonu asla kastırmayan pürüzsüz akış)
+                val startTime = System.currentTimeMillis()
+
+                while (CaptureStateManager.state.value.isRecording) {
+                    val loopStart = System.currentTimeMillis()
+                    val img = try {
+                        imageReader.acquireLatestImage()
+                    } catch (e: Exception) {
+                        null
+                    }
+
+                    if (img != null) {
+                        try {
+                            val planes = img.planes
+                            if (planes.isNotEmpty()) {
+                                val buffer = planes[0].buffer
+                                val pixelStride = planes[0].pixelStride
+                                val rowStride = planes[0].rowStride
+                                val rowPadding = rowStride - pixelStride * targetWidth
+                                val bufferWidth = targetWidth + (if (pixelStride > 0) rowPadding / pixelStride else 0)
+
+                                val rawBitmap = Bitmap.createBitmap(
+                                    bufferWidth,
+                                    targetHeight,
+                                    Bitmap.Config.ARGB_8888
+                                )
+                                rawBitmap.copyPixelsFromBuffer(buffer)
+                                img.close()
+
+                                val cleanBitmap = if (rowPadding > 0 || bufferWidth != targetWidth) {
+                                    val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, targetWidth, targetHeight)
+                                    rawBitmap.recycle()
+                                    cropped
+                                } else {
+                                    rawBitmap
+                                }
+
+                                val frameFile = File(tempDir, String.format(Locale.US, "frame_%05d.jpg", frameIndex++))
+                                FileOutputStream(frameFile).use { out ->
+                                    cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                                }
+                                cleanBitmap.recycle()
+                                synchronized(burstFrames) {
+                                    burstFrames.add(frameFile)
+                                }
+                            } else {
+                                img.close()
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Kare işleme hatası: ${e.message}")
+                            try { img.close() } catch (ignored: Exception) {}
+                        }
+                    }
+
+                    // Saniye sayacını güncelle
+                    val elapsedSec = ((System.currentTimeMillis() - startTime) / 1000).toInt()
+                    if (elapsedSec != secondsCounter) {
+                        secondsCounter = elapsedSec
+                        CaptureStateManager.updateRecording(isRecording = true, durationSec = secondsCounter)
+                    }
+
+                    val spent = System.currentTimeMillis() - loopStart
+                    val sleepTime = frameIntervalMs - spent
+                    if (sleepTime > 0) {
+                        delay(sleepTime)
+                    }
+                }
+            }
+
         } catch (e: Exception) {
-            Log.e(TAG, "Kayıt başlatılamadı: ${e.message}", e)
+            Log.e(TAG, "Sessiz kayıt başlatılamadı: ${e.message}", e)
             CaptureStateManager.showToast("Kayıt başlatılamadı: ${e.message}")
-            virtualDisplay?.release()
-            virtualDisplay = null
+            stopBurstRecordingInternal()
         }
     }
 
     private fun stopRecording() {
-        val recorder = mediaRecorderManager ?: return
+        if (!CaptureStateManager.state.value.isRecording) return
+
+        CaptureStateManager.updateRecording(isRecording = false, durationSec = 0)
+        updateNotification("Ekran Yakalama ve Yüzen Menü Aktif")
+        vibrateFeedback(longArrayOf(0, 120))
+        CaptureStateManager.showToast("⏹ Kayıt tamamlandı, video oluşturuluyor...")
+
+        burstRecordJob?.cancel()
+        burstRecordJob = null
+
+        virtualDisplay?.release()
+        virtualDisplay = null
+        imageReader?.close()
+        imageReader = null
+
         serviceScope.launch {
-            val videoUri = withContext(Dispatchers.IO) {
-                recorder.stopRecording()
+            val framesToEncode = synchronized(burstFrames) { burstFrames.toList() }
+            val tempDir = burstTempDir
+
+            if (framesToEncode.isEmpty()) {
+                CaptureStateManager.showToast("Kaydedilecek kare bulunamadı.")
+                tempDir?.deleteRecursively()
+                return@launch
             }
-            virtualDisplay?.release()
-            virtualDisplay = null
 
-            CaptureStateManager.updateRecording(isRecording = false, durationSec = 0)
-            updateNotification("Ekran Yakalama ve Yüzen Menü Aktif")
-            vibrateFeedback(longArrayOf(0, 120))
+            val capturesDir = File(filesDir, "captures").apply {
+                if (!exists()) mkdirs()
+            }
+            val videoFile = File(capturesDir, "vid_${System.currentTimeMillis()}.mp4")
 
-            if (videoUri != null) {
-                CaptureStateManager.setLastCapturedVideo(videoUri)
-                CaptureStateManager.showToast("Video kaydı kaydedildi!")
+            val success = withContext(Dispatchers.IO) {
+                FrameVideoEncoder.encodeFramesToMp4(
+                    frameFiles = framesToEncode,
+                    outputFile = videoFile,
+                    fps = 5,
+                    targetWidth = 720,
+                    targetHeight = (720 * screenHeight / screenWidth).let { if (it % 2 == 0) it else it - 1 }
+                )
+            }
+
+            tempDir?.deleteRecursively()
+            burstFrames.clear()
+
+            if (success && videoFile.exists() && videoFile.length() > 0) {
+                val authority = "$packageName.fileprovider"
+                val uri = androidx.core.content.FileProvider.getUriForFile(applicationContext, authority, videoFile)
+                CaptureStateManager.setLastCapturedVideo(uri)
+                CaptureStateManager.showToast("🎬 Video başarıyla kaydedildi! (Karşı tarafa sıfır bildirim)")
+            } else {
+                CaptureStateManager.showToast("Video kodlanamadı.")
             }
         }
+    }
+
+    private fun stopBurstRecordingInternal() {
+        burstRecordJob?.cancel()
+        burstRecordJob = null
+        virtualDisplay?.release()
+        virtualDisplay = null
+        imageReader?.close()
+        imageReader = null
+        burstTempDir?.deleteRecursively()
+        burstFrames.clear()
+        CaptureStateManager.updateRecording(isRecording = false, durationSec = 0)
     }
 
     private fun updateNotification(text: String) {
@@ -415,14 +566,7 @@ class ScreenCaptureService : Service() {
     private fun cleanup() {
         unregisterPowerButtonReceiver()
         try {
-            if (CaptureStateManager.state.value.isRecording) {
-                mediaRecorderManager?.stopRecording()
-            }
-            mediaRecorderManager?.release()
-            virtualDisplay?.release()
-            virtualDisplay = null
-            imageReader?.close()
-            imageReader = null
+            stopBurstRecordingInternal()
             mediaProjection?.stop()
             mediaProjection = null
         } catch (e: Exception) {

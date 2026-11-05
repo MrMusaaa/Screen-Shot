@@ -14,10 +14,15 @@ import android.hardware.display.VirtualDisplay
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
@@ -96,10 +101,14 @@ class ScreenCaptureService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private var powerButtonReceiver: BroadcastReceiver? = null
+    private var lastScreenOffTime: Long = 0L
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         mediaRecorderManager = MediaRecorderManager(this)
+        registerPowerButtonReceiver()
 
         // Dinleyici: CaptureStateManager üzerindeki aksiyonları dinle
         CaptureStateManager.events.onEach { event ->
@@ -116,6 +125,66 @@ class ScreenCaptureService : Service() {
                 CaptureStateManager.updateRecording(isRecording = true, durationSec = sec)
             }
         }?.launchIn(serviceScope)
+    }
+
+    private fun registerPowerButtonReceiver() {
+        if (powerButtonReceiver != null) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        powerButtonReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        lastScreenOffTime = System.currentTimeMillis()
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        val now = System.currentTimeMillis()
+                        val diff = now - lastScreenOffTime
+                        // Kullanıcı güç tuşuna hızlıca iki kez bastığında ekran kapanıp açılır (80-1400ms)
+                        if (diff in 80..1400) {
+                            lastScreenOffTime = 0L
+                            Log.d(TAG, "⚡ Güç tuşuna 2 kez hızlı basıldı (Ekran kapandı-açıldı: ${diff}ms)")
+                            toggleRecording()
+                        }
+                    }
+                }
+            }
+        }
+        try {
+            registerReceiver(powerButtonReceiver, filter)
+        } catch (e: Exception) {
+            Log.e(TAG, "PowerButtonReceiver kayıt hatası: ${e.message}")
+        }
+    }
+
+    private fun unregisterPowerButtonReceiver() {
+        powerButtonReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (ignored: Exception) {}
+            powerButtonReceiver = null
+        }
+    }
+
+    private fun vibrateFeedback(pattern: LongArray) {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            } ?: return
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(pattern, -1)
+            }
+        } catch (ignored: Exception) {}
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -294,7 +363,8 @@ class ScreenCaptureService : Service() {
             recorder.startRecording()
             CaptureStateManager.updateRecording(isRecording = true, durationSec = 0)
             updateNotification("Ekran video kaydı yapılıyor...")
-            CaptureStateManager.showToast("Ekran kaydı başladı")
+            vibrateFeedback(longArrayOf(0, 80, 80, 80))
+            CaptureStateManager.showToast("🎥 Ekran kaydı başladı")
         } catch (e: Exception) {
             Log.e(TAG, "Kayıt başlatılamadı: ${e.message}", e)
             CaptureStateManager.showToast("Kayıt başlatılamadı: ${e.message}")
@@ -314,6 +384,7 @@ class ScreenCaptureService : Service() {
 
             CaptureStateManager.updateRecording(isRecording = false, durationSec = 0)
             updateNotification("Ekran Yakalama ve Yüzen Menü Aktif")
+            vibrateFeedback(longArrayOf(0, 120))
 
             if (videoUri != null) {
                 CaptureStateManager.setLastCapturedVideo(videoUri)
@@ -342,6 +413,7 @@ class ScreenCaptureService : Service() {
     }
 
     private fun cleanup() {
+        unregisterPowerButtonReceiver()
         try {
             if (CaptureStateManager.state.value.isRecording) {
                 mediaRecorderManager?.stopRecording()

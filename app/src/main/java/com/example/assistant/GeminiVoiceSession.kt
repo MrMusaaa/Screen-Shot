@@ -72,28 +72,18 @@ class GeminiVoiceSession(context: Context) : VoiceInteractionSession(context) {
         val isRecording = CaptureStateManager.state.value.isRecording
 
         if (isRecording) {
-            // DURUM B: Zaten Ekran Kaydı Yapılıyor
-            val timeSinceStopPress = now - lastStopPressTime
-            if (timeSinceStopPress in 80..1300) {
-                // 2. Basış Algılandı -> KAYDI DURDUR
-                lastStopPressTime = 0L
-                CaptureStateManager.triggerStopRecording()
-                vibratePulse(context, longArrayOf(0, 100, 80, 100))
-                CaptureStateManager.showToast("⏹ Ekran kaydı durduruldu ve gizlice kaydedildi!")
-                hide()
-            } else {
-                // 1. Basış -> İkinci basışı bekle
-                lastStopPressTime = now
-                CaptureStateManager.showToast("⏹ Kaydı durdurmak için 1 kez daha basın")
-                hide()
-            }
+            // Kayıt devam ediyorsa asistanı açmak kaydı anında durdurur ve kaydeder
+            CaptureStateManager.triggerStopRecording()
+            vibratePulse(context, longArrayOf(0, 100, 80, 100))
+            CaptureStateManager.showToast("⏹ Ekran kaydı durduruldu ve gizlice kaydedildi!")
+            hide()
             return
         }
 
         // DURUM A: Kayıt Yok (Ekran Görüntüsü veya Kayıt Başlatma)
         val timeSinceTrigger = now - lastTriggerTime
-        if (timeSinceTrigger in 80..1000) {
-            // 2. Basış Algılandı -> EKRAN KAYDINI BAŞLAT
+        if (timeSinceTrigger in 100..3500) {
+            // 2. Basış / Tetikleme Algılandı -> EKRAN KAYDINI BAŞLAT
             lastTriggerTime = 0L
             // Bekleyen ekran görüntüsü görevini iptal et
             pendingScreenshotRunnable?.let { mainHandler.removeCallbacks(it) }

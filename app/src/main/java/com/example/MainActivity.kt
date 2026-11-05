@@ -554,30 +554,30 @@ fun ControlPanelTab(
 
                     // 1. Eylem: 1 Kez Basılı Tutma -> Ekran Görüntüsü
                     ActionRuleItem(
-                        badge = "1 KEZ",
+                        badge = "1 KEZ TUT",
                         badgeColor = GeminiCyan,
                         title = "Ekran Görüntüsü Alır",
-                        description = "Güç tuşuna 1 kez basılı tutun. 750ms sonra gizlice ekran görüntüsü alınır ve özel alana kaydedilir (Tek titreşim onaylar)."
+                        description = "Güç tuşuna 1 kez basılı tutun. Gizlice ekran görüntüsü alınır ve özel alana kaydedilir (Tek titreşim onaylar)."
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // 2. Eylem: 2 Kez Hızlı Basma -> Ekran Kaydını Başlat
+                    // 2. Eylem: 2 Kez Tetikleme -> Ekran Kaydını Başlat
                     ActionRuleItem(
-                        badge = "2 KEZ HIZLI",
+                        badge = "2 KEZ BAS / TUT",
                         badgeColor = GeminiPurple,
                         title = "Ekran Video Kaydını Başlatır",
-                        description = "Güç tuşuna 2 kez hızlıca basın. Ekran görüntüsü iptal edilir ve gizli ekran video kaydı başlar (Çift titreşim onaylar)."
+                        description = "Güç tuşuna 2 kez ardı ardına basılı tutun VEYA hızlıca 2 kez tıklayın (ekran kapanıp açıldığında). Çift titreşim ile gizli video kaydı başlar."
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // 3. Eylem: Kayıt Sırasında 2 Kez Basma -> Kaydı Durdur
+                    // 3. Eylem: Kayıt Sırasında Basma -> Kaydı Durdur
                     ActionRuleItem(
-                        badge = "2 KEZ TEKRAR",
+                        badge = "DURDUR",
                         badgeColor = GeminiRed,
                         title = "Ekran Kaydını Durdurur",
-                        description = "Kayıt devam ederken güç tuşuna tekrar 2 kez basarak kaydı anında durdurup kaydedebilirsiniz."
+                        description = "Kayıt devam ederken güç tuşuna basılı tutun veya 2 kez hızlıca basın; kayıt anında durdurulup özel alana kaydedilir."
                     )
                 }
             }
